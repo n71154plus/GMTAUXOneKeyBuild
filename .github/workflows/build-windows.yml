@@ -1,0 +1,105 @@
+name: Build Windows (Go + cgo + giu)
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ "v*" ]
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      GOOS: windows
+      GOARCH: amd64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # {U+2461} Go：setup-go 內建快取（模組 + 部分 build 輸出）
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # {U+2462}（可選）快取 GOBIN：把 go install 的工具也記住
+      - name: Cache GOBIN
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\gobin
+          key: gobin-${{ runner.os }}-${{ hashFiles('**/go.mod') }}
+
+      - name: Set GOBIN
+        shell: pwsh
+        run: |
+          $env:GOBIN="${{ runner.temp }}\gobin"
+          go env -w GOBIN="$env:GOBIN"
+          echo "GOBIN=$env:GOBIN" >> $env:GITHUB_ENV
+
+      # {U+2463}（可選）移動並快取 GOCACHE（更穩定命中 & I/O 較快）
+      - name: Cache GOCACHE
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\gocache
+          key: gocache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+
+      - name: Set GOCACHE
+        shell: pwsh
+        run: |
+          $env:GOCACHE="${{ runner.temp }}\gocache"
+          go env -w GOCACHE="$env:GOCACHE"
+          echo "GOCACHE=$env:GOCACHE" >> $env:GITHUB_ENV
+
+      # 顯示工具鏈版本（除錯用）
+      - name: Show toolchain
+        shell: bash
+        run: |
+          go version
+          go env
+
+      # Build
+      - name: Build (CGO + giu)
+        shell: bash
+        run: |
+          mkdir -p dist
+          # 如為 GUI 程式可改成：-ldflags "-H=windowsgui -s -w"
+          go build -v -trimpath -buildvcs=false -ldflags "-s -w" -o dist/app.exe ./
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-windows-amd64-${{ github.sha }}
+          path: dist/app.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-windows-amd64-${{ github.sha }}
+          path: dist
+
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          Get-FileHash dist\app.exe -Algorithm SHA256 | ForEach-Object {
+            "$($_.Hash)  app.exe" | Out-File -FilePath dist\SHA256SUMS.txt -Encoding ascii
+          }
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/app.exe
+            dist/SHA256SUMS.txt
