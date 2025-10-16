@@ -1,10 +1,12 @@
 name: Build Windows (Go + cgo + giu)
 
 on:
-  push:
-    branches: [ main, master ]
-    tags: [ "v*" ]
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v1.0.0)"
+        required: false
+        default: "manual"
 
 permissions:
   contents: write
@@ -23,14 +25,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # {U+2461} Go¡Gsetup-go ¤º«Ø§Ö¨ú¡]¼Ò²Õ + ³¡¤À build ¿é¥X¡^
+      # {U+2461} Goï¿½Gsetup-go ï¿½ï¿½ï¿½Ø§Ö¨ï¿½ï¿½]ï¿½Ò²ï¿½ + ï¿½ï¿½ï¿½ï¿½ build ï¿½ï¿½Xï¿½^
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
-      # {U+2462}¡]¥i¿ï¡^§Ö¨ú GOBIN¡G§â go install ªº¤u¨ã¤]°O¦í
+      # {U+2462}ï¿½]ï¿½iï¿½ï¿½^ï¿½Ö¨ï¿½ GOBINï¿½Gï¿½ï¿½ go install ï¿½ï¿½ï¿½uï¿½ï¿½]ï¿½Oï¿½ï¿½
       - name: Cache GOBIN
         uses: actions/cache@v4
         with:
@@ -44,7 +46,7 @@ jobs:
           go env -w GOBIN="$env:GOBIN"
           echo "GOBIN=$env:GOBIN" >> $env:GITHUB_ENV
 
-      # {U+2463}¡]¥i¿ï¡^²¾°Ê¨Ã§Ö¨ú GOCACHE¡]§óÃ­©w©R¤¤ & I/O ¸û§Ö¡^
+      # {U+2463}ï¿½]ï¿½iï¿½ï¿½^ï¿½ï¿½ï¿½Ê¨Ã§Ö¨ï¿½ GOCACHEï¿½]ï¿½ï¿½Ã­ï¿½wï¿½Rï¿½ï¿½ & I/O ï¿½ï¿½ï¿½Ö¡^
       - name: Cache GOCACHE
         uses: actions/cache@v4
         with:
@@ -58,7 +60,7 @@ jobs:
           go env -w GOCACHE="$env:GOCACHE"
           echo "GOCACHE=$env:GOCACHE" >> $env:GITHUB_ENV
 
-      # Åã¥Ü¤u¨ãÃìª©¥»¡]°£¿ù¥Î¡^
+      # ï¿½ï¿½Ü¤uï¿½ï¿½ï¿½ìª©ï¿½ï¿½ï¿½]ï¿½ï¿½ï¿½ï¿½ï¿½Î¡^
       - name: Show toolchain
         shell: bash
         run: |
@@ -70,7 +72,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          # ¦p¬° GUI µ{¦¡¥i§ï¦¨¡G-ldflags "-H=windowsgui -s -w"
+          # ï¿½pï¿½ï¿½ GUI ï¿½{ï¿½ï¿½ï¿½iï¿½ï¦¨ï¿½G-ldflags "-H=windowsgui -s -w"
           go build -v -trimpath -buildvcs=false -ldflags "-s -w" -o dist/app.exe ./
 
       - name: Upload artifact
