@@ -240,8 +240,23 @@ func (ui *uiApp) onDisplaySelected(index int, mainText, _ string, _ rune) {
 }
 
 func (ui *uiApp) handleGlobalShortcuts(event *tcell.EventKey) *tcell.EventKey {
-	if event.Key() == tcell.KeyEsc {
+	switch event.Key() {
+	case tcell.KeyEsc:
 		ui.app.SetFocus(ui.mainMenu)
+		return nil
+	case tcell.KeyTAB:
+		if ui.app.GetFocus() == ui.mainMenu {
+			ui.app.SetFocus(ui.displayList)
+		} else {
+			ui.app.SetFocus(ui.mainMenu)
+		}
+		return nil
+	case tcell.KeyBacktab:
+		if ui.app.GetFocus() == ui.displayList {
+			ui.app.SetFocus(ui.mainMenu)
+		} else {
+			ui.app.SetFocus(ui.displayList)
+		}
 		return nil
 	}
 	return event
