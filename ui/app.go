@@ -10,19 +10,23 @@ import (
 	"github.com/rivo/tview"
 )
 
+// App 結構封裝了整個終端介面應用程式的狀態與元件。
 type App struct {
-	app         *tview.Application
-	displays    []*display.Display
-	mainMenu    *tview.List
-	displayList *tview.List
-	table       *tview.Table
-	statusBar   *tview.TextView
-	layout      tview.Primitive
+	app         *tview.Application // tview 的核心應用程式實例
+	displays    []*display.Display // 目前抓取到的顯示器資訊列表
+	mainMenu    *tview.List        // 左側主要功能選單
+	displayList *tview.List        // 顯示所有顯示器的清單
+	table       *tview.Table       // 顯示詳細屬性的表格
+	statusBar   *tview.TextView    // 底部狀態列
+	layout      tview.Primitive    // 頁面佈局的根節點
 }
 
+// NewApp 建立一個新的 App 實例，並完成所有介面的初始化設定。
 func NewApp() *App {
+	// 啟用滑鼠操作的 tview 應用程式，提供更友善的互動方式。
 	application := tview.NewApplication().EnableMouse(true)
 
+	// 建立主選單，提供重新偵測、切換焦點與離開等功能。
 	mainMenu := tview.NewList().
 		AddItem("重新偵測螢幕", "刷新顯示器列表", 'r', nil).
 		AddItem("切換至螢幕列表", "將焦點移到螢幕選單", 'd', nil).
@@ -34,6 +38,7 @@ func NewApp() *App {
 		SetBorderColor(tcell.ColorWhite).
 		SetTitleColor(tcell.ColorYellow)
 
+	// 顯示器清單僅呈現主要文字，方便使用者選擇不同的顯示器。
 	displayList := tview.NewList().
 		ShowSecondaryText(false).
 		SetHighlightFullLine(true)
@@ -43,6 +48,7 @@ func NewApp() *App {
 		SetBorderColor(tcell.ColorWhite).
 		SetTitleColor(tcell.ColorYellow)
 
+	// 建立顯示詳細資料的表格，固定第一列為標題。
 	table := tview.NewTable().
 		SetBorders(true).
 		SetSelectable(false, false).
@@ -53,6 +59,7 @@ func NewApp() *App {
 		SetBorderColor(tcell.ColorWhite).
 		SetTitleColor(tcell.ColorYellow)
 
+	// 狀態列顯示系統提示訊息，使用動態顏色讓訊息更明顯。
 	status := tview.NewTextView().
 		SetDynamicColors(true).
 		SetRegions(false).
@@ -61,21 +68,25 @@ func NewApp() *App {
 		SetTitle(" Status ").
 		SetBorderColor(tcell.ColorWhite)
 
+	// 左側由主選單與顯示器清單上下排列組成。
 	leftPanel := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(mainMenu, 0, 1, true).
 		AddItem(displayList, 0, 2, false)
 
+	// 中央內容區包含左側功能區與右側資訊表格。
 	content := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
 		AddItem(leftPanel, 0, 1, true).
 		AddItem(table, 0, 2, false)
 
+	// 最外層佈局將內容區與狀態列上下排列。
 	layout := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(content, 0, 1, true).
 		AddItem(status, 1, 0, false)
 
+	// 將所有元件封裝在 App 結構中，方便後續操作。
 	app := &App{
 		app:         application,
 		mainMenu:    mainMenu,
@@ -85,17 +96,21 @@ func NewApp() *App {
 		layout:      layout,
 	}
 
+	// 綁定主選單和顯示器清單的事件處理函式。
 	mainMenu.SetSelectedFunc(app.handleMainMenu)
 	displayList.SetChangedFunc(app.onDisplayChanged)
 	displayList.SetSelectedFunc(app.onDisplaySelected)
 
+	// 設定全域鍵盤與滑鼠事件，使操作更直覺。
 	application.SetInputCapture(app.handleGlobalShortcuts)
 	application.SetMouseCapture(app.handleMouseCapture)
 
 	return app
 }
 
+// Run 啟動應用程式，並在執行前刷新顯示器資訊與狀態。
 func (app *App) Run() error {
+	// 嘗試重新整理顯示器，並依結果在狀態列顯示不同訊息。
 	if err := app.refreshDisplays(); err != nil {
 		if len(app.displays) == 0 {
 			app.setStatus(fmt.Sprintf("[red]螢幕資訊載入失敗: %v[-]", err))
@@ -108,40 +123,50 @@ func (app *App) Run() error {
 		app.setStatus(fmt.Sprintf("[green]載入 %d 個顯示器[-]", len(app.displays)))
 	}
 
+	// 建立畫面根節點並將焦點放在主選單後開始事件迴圈。
 	return app.app.SetRoot(app.layout, true).SetFocus(app.mainMenu).Run()
 }
 
+// refreshDisplays 重新取得顯示器清單並更新顯示內容。
 func (app *App) refreshDisplays() error {
+	// 呼叫 edidhelper 取得系統中的所有顯示器資訊。
 	displays, err := edidhelper.GetScreens()
 	app.displays = displays
 	app.populateDisplayList()
 
+	// 若完全沒有資料，清空表格並回傳錯誤以便顯示提醒。
 	if len(displays) == 0 {
 		app.table.Clear()
 		return err
 	}
 
+	// 預設選擇清單中的最後一個顯示器，方便快速檢視最新項目。
 	lastIndex := len(displays) - 1
 	app.displayList.SetCurrentItem(lastIndex)
 	app.updateTable(displays[lastIndex])
 	return err
 }
 
+// populateDisplayList 將顯示器資訊填入左側清單。
 func (app *App) populateDisplayList() {
 	app.displayList.Clear()
 	for i, d := range app.displays {
+		// 以數字鍵作為快捷鍵，方便使用者快速切換。
 		shortcut := rune('0' + (i % 10))
 		label := fmt.Sprintf("%s", d.AdapterName)
 		app.displayList.AddItem(label, d.AdapterString, shortcut, nil)
 	}
+	// 若沒有任何顯示器，提供佔位文字提醒使用者。
 	if len(app.displays) == 0 {
 		app.displayList.AddItem("<無顯示器>", "", 0, nil)
 	}
 }
 
+// updateTable 將選定顯示器的詳細資訊填入表格中。
 func (app *App) updateTable(d *display.Display) {
 	app.table.Clear()
 
+	// 先建立標題列，清楚區隔欄位與內容。
 	headers := []string{"欄位", "內容"}
 	for col, header := range headers {
 		cell := tview.NewTableCell(header).
@@ -152,6 +177,7 @@ func (app *App) updateTable(d *display.Display) {
 		app.table.SetCell(0, col, cell)
 	}
 
+	// 將顯示器結構轉成表格列，逐一填入內容。
 	rows := displayToRows(d)
 	for rowIndex, row := range rows {
 		nameCell := tview.NewTableCell(row[0]).
@@ -165,6 +191,7 @@ func (app *App) updateTable(d *display.Display) {
 	}
 }
 
+// displayToRows 將顯示器資訊轉換成表格可使用的列資料。
 func displayToRows(d *display.Display) [][]string {
 	rows := [][]string{
 		{"顯示卡名稱", d.AdapterName},
@@ -179,6 +206,7 @@ func displayToRows(d *display.Display) [][]string {
 		{"EDID 修訂版", d.Revision},
 	}
 
+	// 額外的描述欄位僅在有內容時才加入表格。
 	descriptors := []struct {
 		label string
 		value string
@@ -198,9 +226,11 @@ func displayToRows(d *display.Display) [][]string {
 	return rows
 }
 
+// handleMainMenu 處理主選單項目的點擊或快捷鍵事件。
 func (app *App) handleMainMenu(index int, mainText, _ string, _ rune) {
 	switch mainText {
 	case "重新偵測螢幕":
+		// 重新整理顯示器並依照結果顯示對應提示訊息。
 		if err := app.refreshDisplays(); err != nil {
 			message := fmt.Sprintf("螢幕重新偵測時發生錯誤: %v", err)
 			if len(app.displays) > 0 {
@@ -214,30 +244,38 @@ func (app *App) handleMainMenu(index int, mainText, _ string, _ rune) {
 			app.setStatus(fmt.Sprintf("[green]載入 %d 個顯示器[-]", len(app.displays)))
 		}
 	case "切換至螢幕列表":
+		// 將焦點移到顯示器清單，方便使用者瀏覽。
 		app.app.SetFocus(app.displayList)
 	case "離開":
+		// 停止事件迴圈，結束應用程式。
 		app.app.Stop()
 	}
 }
 
+// onDisplayChanged 在使用者切換不同顯示器時更新表格與狀態。
 func (app *App) onDisplayChanged(index int, mainText, _ string, _ rune) {
 	if index < 0 || index >= len(app.displays) {
 		return
 	}
+	// 更新表格內容並同步狀態列文字。
 	app.updateTable(app.displays[index])
 	app.setStatus(fmt.Sprintf("[green]目前顯示器: %s[-]", mainText))
 }
 
+// onDisplaySelected 在清單項目被確認時觸發，沿用切換邏輯。
 func (app *App) onDisplaySelected(index int, mainText, _ string, _ rune) {
 	app.onDisplayChanged(index, mainText, "", 0)
 }
 
+// handleGlobalShortcuts 處理全域快捷鍵，提供快速切換焦點的體驗。
 func (app *App) handleGlobalShortcuts(event *tcell.EventKey) *tcell.EventKey {
 	switch event.Key() {
 	case tcell.KeyEsc:
+		// 按下 Esc 時回到主選單。
 		app.app.SetFocus(app.mainMenu)
 		return nil
 	case tcell.KeyTAB:
+		// Tab 在主選單與顯示器清單間循環切換。
 		if app.app.GetFocus() == app.mainMenu {
 			app.app.SetFocus(app.displayList)
 		} else {
@@ -245,6 +283,7 @@ func (app *App) handleGlobalShortcuts(event *tcell.EventKey) *tcell.EventKey {
 		}
 		return nil
 	case tcell.KeyBacktab:
+		// Shift+Tab 則反向切換焦點。
 		if app.app.GetFocus() == app.displayList {
 			app.app.SetFocus(app.mainMenu)
 		} else {
@@ -255,6 +294,7 @@ func (app *App) handleGlobalShortcuts(event *tcell.EventKey) *tcell.EventKey {
 	return event
 }
 
+// handleMouseCapture 攔截滑鼠操作，支援中鍵快速回到主選單。
 func (app *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
 	if event.Buttons()&tcell.Button2 != 0 {
 		app.app.SetFocus(app.mainMenu)
@@ -263,17 +303,20 @@ func (app *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseAc
 	return event, action
 }
 
+// showModal 顯示提示訊息的彈出視窗，並在關閉後恢復主要佈局。
 func (app *App) showModal(message string) {
 	modal := tview.NewModal().
 		SetText(message).
 		AddButtons([]string{"OK"}).
 		SetDoneFunc(func(_ int, _ string) {
+			// 關閉視窗後重新設定主畫面並將焦點放回主選單。
 			app.app.SetRoot(app.layout, true).SetFocus(app.mainMenu)
 		})
 
 	app.app.SetRoot(modal, true).SetFocus(modal)
 }
 
+// setStatus 更新狀態列的文字，統一由此處集中管理。
 func (app *App) setStatus(message string) {
 	app.statusBar.SetText(message)
 }
