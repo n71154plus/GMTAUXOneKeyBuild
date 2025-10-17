@@ -1,6 +1,6 @@
 module GMTAUXOneKeyBuild
 
-go 1.23.4
+go 1.25.3
 
 require (
 	github.com/gdamore/tcell/v2 v2.9.0

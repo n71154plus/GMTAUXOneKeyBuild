@@ -1,0 +1,6 @@
+run_build_online.ps1
+
+# 🔒 不上傳編譯後檔案
+dist/
+*.exe
+*.dll

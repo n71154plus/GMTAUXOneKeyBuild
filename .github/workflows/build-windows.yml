@@ -1,16 +1,17 @@
-name: Build Windows (Go + cgo + giu)
+name: 建置 Windows（Go 快速路徑）
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. v1.0.0)"
+        description: "發行版本（例如 v1.0.0）。若留空僅產出 artifact，不建立 Release。"
         required: false
-        default: "manual"
+        default: ""
 
 permissions:
   contents: write
 
+# 若重複觸發同一 workflow，會自動取消舊的（避免同時建置）
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,83 +26,105 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # {U+2461} Go嚙瘦setup-go 嚙踝蕭嚙諍快剁蕭嚙稽嚙課莎蕭 + 嚙踝蕭嚙踝蕭 build 嚙踝蕭X嚙稷
-      - name: Setup Go
+      # 使用 runner 內建的 Go（例如 1.23.x），避免重新下載整個 SDK
+      - name: 設定 Go（快速）
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version: '1.25.x'         # 與 go.mod 內版本相容
+          check-latest: false
+          cache: false                 # 關閉內建 cache，我們手動控制
 
-      # {U+2462}嚙稽嚙箠嚙踝蕭^嚙誰剁蕭 GOBIN嚙瘦嚙踝蕭 go install 嚙踝蕭嚙線嚙踝蕭]嚙瞌嚙踝蕭
-      - name: Cache GOBIN
+      # 快取 GOBIN：你 go install 的工具（例如 golangci-lint）會快很多
+      - name: 快取 GOBIN
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\gobin
           key: gobin-${{ runner.os }}-${{ hashFiles('**/go.mod') }}
+          restore-keys: |
+            gobin-${{ runner.os }}-
 
-      - name: Set GOBIN
+      - name: 設定 GOBIN
         shell: pwsh
         run: |
           $env:GOBIN="${{ runner.temp }}\gobin"
           go env -w GOBIN="$env:GOBIN"
           echo "GOBIN=$env:GOBIN" >> $env:GITHUB_ENV
 
-      # {U+2463}嚙稽嚙箠嚙踝蕭^嚙踝蕭嚙褊並快剁蕭 GOCACHE嚙稽嚙踝蕭穩嚙緩嚙磋嚙踝蕭 & I/O 嚙踝蕭嚙誰）
-      - name: Cache GOCACHE
+      # ? 新增：快取 Go 模組下載目錄（pkg/mod）
+      - name: 快取 GOMODCACHE
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\gomod
+          key: gomod-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            gomod-${{ runner.os }}-
+
+      - name: 設定 GOMODCACHE
+        shell: pwsh
+        run: |
+          $env:GOMODCACHE="${{ runner.temp }}\gomod"
+          go env -w GOMODCACHE="$env:GOMODCACHE"
+          echo "GOMODCACHE=$env:GOMODCACHE" >> $env:GITHUB_ENV
+
+      # ? 快取 Go 建置暫存（編譯產物）
+      - name: 快取 GOCACHE
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\gocache
           key: gocache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            gocache-${{ runner.os }}-
 
-      - name: Set GOCACHE
+      - name: 設定 GOCACHE
         shell: pwsh
         run: |
           $env:GOCACHE="${{ runner.temp }}\gocache"
           go env -w GOCACHE="$env:GOCACHE"
           echo "GOCACHE=$env:GOCACHE" >> $env:GITHUB_ENV
 
-      # 嚙踝蕭雂u嚙踝蕭嚙趣版嚙踝蕭嚙稽嚙踝蕭嚙踝蕭嚙諄）
-      - name: Show toolchain
+      - name: 顯示工具鏈資訊
         shell: bash
         run: |
           go version
           go env
 
-      # Build
-      - name: Build (CGO + giu)
+      - name: 建置專案
         shell: bash
         run: |
           mkdir -p dist
-          # 嚙緘嚙踝蕭 GUI 嚙緹嚙踝蕭嚙箠嚙踝成嚙瘦-ldflags "-H=windowsgui -s -w"
           go build -v -trimpath -buildvcs=false -ldflags "-s -w" -o dist/app.exe ./
 
-      - name: Upload artifact
+      - name: 上傳建置產物
         uses: actions/upload-artifact@v4
         with:
           name: app-windows-amd64-${{ github.sha }}
           path: dist/app.exe
 
+  # 若使用者在手動觸發時輸入了 version（例如 v0.1.0），則建立 Release
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ inputs.version != '' && startsWith(inputs.version, 'v') }}
     needs: build
     runs-on: windows-latest
     steps:
-      - name: Download artifact
+      - name: 下載建置產物
         uses: actions/download-artifact@v4
         with:
           name: app-windows-amd64-${{ github.sha }}
           path: dist
 
-      - name: Generate checksums
+      - name: 產生檔案雜湊
         shell: pwsh
         run: |
           Get-FileHash dist\app.exe -Algorithm SHA256 | ForEach-Object {
             "$($_.Hash)  app.exe" | Out-File -FilePath dist\SHA256SUMS.txt -Encoding ascii
           }
 
-      - name: Publish Release
+      - name: 發佈 Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.version }}
+          name: ${{ inputs.version }}
+          body: "手動建立發行版本 ${{ inputs.version }}"
           files: |
             dist/app.exe
             dist/SHA256SUMS.txt
