@@ -12,9 +12,10 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
+// displayDeviceActive 表示裝置目前已啟用的旗標值。
 const displayDeviceActive = 0x1
 
-// displayDevice mirrors the DISPLAY_DEVICE structure from the Win32 API.
+// displayDevice 對應 Win32 API 的 DISPLAY_DEVICE 結構，用來接收列舉結果。
 type displayDevice struct {
 	cb           uint32
 	DeviceName   [32]uint16
@@ -29,10 +30,7 @@ var (
 	procEnumDisplayDevicesW = user32.NewProc("EnumDisplayDevicesW")
 )
 
-// GetScreens queries the available displays on Windows and parses the EDID
-// information for each active monitor. It returns a slice of Display values.
-// If some devices fail to produce EDID data the method still returns the
-// displays gathered so far alongside the last error encountered.
+// GetScreens 列舉所有啟用中的顯示器並解析 EDID，回傳顯示器資訊清單與最後錯誤。
 func GetScreens() ([]*display.Display, error) {
 	var (
 		displays []*display.Display
@@ -40,6 +38,7 @@ func GetScreens() ([]*display.Display, error) {
 	)
 
 	for adapterIndex := uint32(0); ; adapterIndex++ {
+		// 依序列舉顯示卡，沒有更多資料時結束迴圈。
 		adapter, ok := enumDisplayDevices("", adapterIndex)
 		if !ok {
 			break
@@ -49,21 +48,25 @@ func GetScreens() ([]*display.Display, error) {
 		adapterString := syscall.UTF16ToString(adapter.DeviceString[:])
 
 		for monitorIndex := uint32(0); ; monitorIndex++ {
+			// 針對每張顯示卡列舉所連接的顯示器。
 			monitor, ok := enumDisplayDevices(adapterName, monitorIndex)
 			if !ok {
 				break
 			}
 			if monitor.StateFlags&displayDeviceActive == 0 {
+				// 未啟用的顯示器不需處理。
 				continue
 			}
 
 			deviceID := strings.TrimSpace(syscall.UTF16ToString(monitor.DeviceID[:]))
+			// 從登錄檔讀出對應的 EDID。
 			edid, err := readEDIDFromRegistry(deviceID)
 			if err != nil {
 				lastErr = err
 				continue
 			}
 
+			// 解析 EDID 內容並加入結果清單。
 			info, err := display.ParseEDID(edid, adapterName, adapterString, deviceID)
 			if err != nil {
 				lastErr = err
@@ -88,6 +91,7 @@ func enumDisplayDevices(device string, devNum uint32) (*displayDevice, bool) {
 		devicePtr, _ = syscall.UTF16PtrFromString(device)
 	}
 
+	// 呼叫 Win32 API 取得指定索引的顯示卡或顯示器資訊。
 	ret, _, _ := procEnumDisplayDevicesW.Call(
 		uintptr(unsafe.Pointer(devicePtr)),
 		uintptr(devNum),
@@ -107,6 +111,7 @@ func readEDIDFromRegistry(deviceID string) ([]byte, error) {
 	}
 	defer rootKey.Close()
 
+	// 列出所有 PnP 裝置代碼以便逐一搜尋符合條件的實例。
 	pnpIDs, err := rootKey.ReadSubKeyNames(-1)
 	if err != nil {
 		return nil, err
@@ -114,6 +119,7 @@ func readEDIDFromRegistry(deviceID string) ([]byte, error) {
 
 	var lastErr error
 	for _, pnpID := range pnpIDs {
+		// 逐一開啟每個裝置節點並嘗試取得 EDID。
 		instanceKey, err := registry.OpenKey(rootKey, pnpID, registry.READ)
 		if err != nil {
 			lastErr = err
@@ -132,6 +138,7 @@ func readEDIDFromRegistry(deviceID string) ([]byte, error) {
 	}
 
 	if lastErr == nil {
+		// 若沒有取得任何資料也沒有具體錯誤，回傳預設的找不到訊息。
 		lastErr = errors.New("edid not found in registry")
 	}
 	return nil, lastErr
@@ -145,6 +152,7 @@ func readEDIDFromInstance(instanceKey registry.Key, deviceID string) ([]byte, er
 
 	var lastErr error
 	for _, inst := range instances {
+		// 開啟具體的裝置實例節點以查詢驅動名稱。
 		attrKey, err := registry.OpenKey(instanceKey, inst, registry.READ)
 		if err != nil {
 			lastErr = err
@@ -163,6 +171,7 @@ func readEDIDFromInstance(instanceKey registry.Key, deviceID string) ([]byte, er
 			continue
 		}
 
+		// 尋找 Device Parameters 子鍵以讀取 EDID 原始資料。
 		edidKey, err := registry.OpenKey(attrKey, "Device Parameters", registry.READ)
 		if err != nil {
 			attrKey.Close()
@@ -186,6 +195,7 @@ func readEDIDFromInstance(instanceKey registry.Key, deviceID string) ([]byte, er
 	}
 
 	if lastErr == nil {
+		// 沒有符合的實例時回傳統一錯誤訊息。
 		lastErr = errors.New("edid not found for device")
 	}
 	return nil, lastErr

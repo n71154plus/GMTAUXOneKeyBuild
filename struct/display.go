@@ -27,6 +27,7 @@ type Display struct {
 // parseManufacturerID 解析製造商ID
 func parseManufacturerID(data []byte) string {
 	val := binary.BigEndian.Uint16(data)
+	// EDID 製造商 ID 將三個五位元字母壓縮在 16bit 中，依序解析成 ASCII。
 	c1 := ((val >> 10) & 0x1F) + 'A' - 1
 	c2 := ((val >> 5) & 0x1F) + 'A' - 1
 	c3 := (val & 0x1F) + 'A' - 1
@@ -39,6 +40,7 @@ func equalBytes(a, b []byte) bool {
 		return false
 	}
 	for i := range a {
+		// 任一位元組不同即視為不相同。
 		if a[i] != b[i] {
 			return false
 		}
@@ -54,23 +56,23 @@ func parseDescriptor(desc []byte) string {
 
 	pixelClock := binary.LittleEndian.Uint16(desc[0:2])
 	if pixelClock == 0 {
-		// Monitor descriptor
+		// pixelClock 為 0 代表是監視器描述符，而非詳細定時資料。
 		tag := desc[3]
 		switch tag {
-		case 0xFC: // Monitor Name
+		case 0xFC: // Monitor Name 監視器名稱
 			name := strings.TrimSpace(string(desc[5:18]))
 			return fmt.Sprintf("Monitor Name: %s", name)
-		case 0xFE: // Text
+		case 0xFE: // Text 任意文字
 			text := strings.TrimSpace(string(desc[5:18]))
 			return fmt.Sprintf("Text: %s", text)
-		case 0xFF: // Serial String
+		case 0xFF: // Serial String 序號字串
 			serial := strings.TrimSpace(string(desc[5:18]))
 			return fmt.Sprintf("Monitor Serial: %s", serial)
 		default:
 			return fmt.Sprintf("Monitor Descriptor (Tag 0x%02X)", tag)
 		}
 	} else {
-		// Detailed Timing Descriptor
+		// 詳細定時描述符，必須依欄位位元組重建解析度與時脈。
 		hActive := int(desc[2]) + ((int(desc[4]) & 0xF0) << 4)
 		hBlank := int(desc[3]) + ((int(desc[4]) & 0x0F) << 8)
 		vActive := int(desc[5]) + ((int(desc[7]) & 0xF0) << 4)
@@ -80,6 +82,7 @@ func parseDescriptor(desc []byte) string {
 
 		refresh := 0.0
 		if hTotal != 0 && vTotal != 0 {
+			// pixelClock 單位為 10kHz，因此需除以總像素數後轉換為 Hz。
 			refresh = float64(pixelClock) / float64(hTotal*vTotal/10000)
 		}
 
@@ -95,11 +98,13 @@ func ParseEDID(edid []byte,
 	deviceID string,
 ) (*Display, error) {
 	if len(edid) < 128 {
+		// 基本 EDID 區塊為 128 位元組，長度不足代表資料損毀。
 		return nil, fmt.Errorf("EDID data too short")
 	}
 
 	header := []byte{0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00}
 	if !equalBytes(edid[0:8], header) {
+		// EDID 頭八位元組應為固定標頭，用於驗證資料合法性。
 		return nil, fmt.Errorf("invalid EDID header")
 	}
 
@@ -115,6 +120,7 @@ func ParseEDID(edid []byte,
 	offsets := []int{0x36, 0x48, 0x5A, 0x6C}
 	descs := make([]string, 4)
 	for i, off := range offsets {
+		// 每個描述符長度固定 18 位元組。
 		desc := edid[off : off+18]
 		descs[i] = parseDescriptor(desc)
 	}
