@@ -1,162 +1,271 @@
 package main
 
 import (
+	"fmt"
+	"log"
+
 	"GMTAUXOneKeyBuild/edidhelper"
 	display "GMTAUXOneKeyBuild/struct"
-	"fmt"
-	"reflect"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
-var displays []*display.Display
+type uiApp struct {
+	app         *tview.Application
+	displays    []*display.Display
+	mainMenu    *tview.List
+	displayList *tview.List
+	table       *tview.Table
+	statusBar   *tview.TextView
+	layout      tview.Primitive
+}
 
 func main() {
-	// === 初始化階段 ===
-	displays = edidhelper.GetScreen()
+	if err := newUIApp().run(); err != nil {
+		log.Fatalf("failed to run application: %v", err)
+	}
+}
 
+func newUIApp() *uiApp {
 	app := tview.NewApplication().EnableMouse(true)
-	// 區域副函數
-	// 營幕選單初始化
-	settingsListInit := func(settingsList *tview.List) {
-		settingsList.Clear()
-		for i, d := range displays {
-			r := rune('0' + (i % 10)) // 限制快捷鍵範圍在 '0'-'9'
-			settingsList.AddItem(d.AdapterName, d.AdapterString, r, nil)
-		}
-	}
-	// 更新表格顯示
-	updateTable := func(table *tview.Table, d *display.Display) {
-		table.Clear()
-		v := reflect.ValueOf(*d)
-		t := v.Type()
-		for i := 0; i < v.NumField(); i++ {
-			fieldName := t.Field(i).Name
-			fieldValue := fmt.Sprintf("%v", v.Field(i).Interface())
-			table.SetCell(i, 0, tview.NewTableCell(fieldName).
-				SetTextColor(tview.Styles.SecondaryTextColor).
-				SetSelectable(false))
-			table.SetCell(i, 1, tview.NewTableCell(fieldValue).
-				SetTextColor(tview.Styles.PrimaryTextColor).
-				SetSelectable(false))
-		}
-	}
-	// 主清單 (Main Menu)
-	mainList := tview.NewList().
-		AddItem("Start", "重新偵測連接營幕", 's', nil).
-		AddItem("Settings", "設定選項", 't', nil).
-		AddItem("Exit", "離開應用程式", 'e', func() { app.Stop() }).
+
+	mainMenu := tview.NewList().
+		AddItem("重新偵測螢幕", "刷新顯示器列表", 'r', nil).
+		AddItem("切換至螢幕列表", "將焦點移到螢幕選單", 'd', nil).
+		AddItem("離開", "結束應用程式", 'q', nil).
 		SetHighlightFullLine(true)
-	mainList.SetBorder(true).
+	mainMenu.SetBorder(true).
 		SetTitle(" Main Menu ").
 		SetTitleAlign(tview.AlignCenter).
 		SetBorderColor(tcell.ColorWhite).
 		SetTitleColor(tcell.ColorYellow)
 
-	// 設定清單 (Settings Menu)
-	settingsList := tview.NewList().
+	displayList := tview.NewList().
+		ShowSecondaryText(false).
 		SetHighlightFullLine(true)
-	settingsList.SetBorder(true).
-		SetTitle(" Settings Menu ").
+	displayList.SetBorder(true).
+		SetTitle(" Displays ").
 		SetTitleAlign(tview.AlignCenter).
 		SetBorderColor(tcell.ColorWhite).
 		SetTitleColor(tcell.ColorYellow)
-	settingsListInit(settingsList)
 
-	// 顯示資訊表格 (Display Table)
 	table := tview.NewTable().
 		SetBorders(true).
-		SetSelectable(true, false)
+		SetSelectable(false, false).
+		SetFixed(1, 0)
+	table.SetBorder(true).
+		SetTitle(" Display Details ").
+		SetTitleAlign(tview.AlignCenter).
+		SetBorderColor(tcell.ColorWhite).
+		SetTitleColor(tcell.ColorYellow)
 
-	// === UI 佈局 ===
+	status := tview.NewTextView().
+		SetDynamicColors(true).
+		SetRegions(false).
+		SetWrap(false)
+	status.SetBorder(true).
+		SetTitle(" Status ").
+		SetBorderColor(tcell.ColorWhite)
+
 	leftPanel := tview.NewFlex().
 		SetDirection(tview.FlexRow).
-		AddItem(mainList, 0, 1, true).
-		AddItem(settingsList, 0, 1, false)
+		AddItem(mainMenu, 0, 1, true).
+		AddItem(displayList, 0, 2, false)
 
-	rootFlex := tview.NewFlex().
+	content := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
 		AddItem(leftPanel, 0, 1, true).
-		AddItem(table, 0, 1, false)
+		AddItem(table, 0, 2, false)
 
-	// === 綁定事件 ===
+	layout := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(content, 0, 1, true).
+		AddItem(status, 1, 0, false)
 
-	// 當選擇不同 Display 時更新表格
-	settingsList.SetChangedFunc(func(index int, mainText, secondaryText string, shortcut rune) {
-		if index >= 0 && index < len(displays) {
-			updateTable(table, displays[index])
-		}
-	})
-
-	// 若有顯示器資料，自動顯示最後一項
-	if len(displays) > 0 {
-		lastIndex := len(displays) - 1
-		updateTable(table, displays[lastIndex])
-		settingsList.SetCurrentItem(lastIndex)
+	ui := &uiApp{
+		app:         app,
+		mainMenu:    mainMenu,
+		displayList: displayList,
+		table:       table,
+		statusBar:   status,
+		layout:      layout,
 	}
 
-	// Main Menu 選擇事件
-	mainList.SetSelectedFunc(func(ix int, mainText, secText string, shortcut rune) {
-		switch mainText {
-		case "Start":
-			displays = edidhelper.GetScreen()
-			settingsListInit(settingsList)
-			showModal(app, rootFlex, "螢幕重新偵測完成！")
+	mainMenu.SetSelectedFunc(ui.handleMainMenu)
+	displayList.SetChangedFunc(ui.onDisplayChanged)
+	displayList.SetSelectedFunc(ui.onDisplaySelected)
 
-		case "Settings":
-			app.SetRoot(settingsList, true).SetFocus(settingsList)
+	app.SetInputCapture(ui.handleGlobalShortcuts)
+	app.SetMouseCapture(ui.handleMouseCapture)
 
-		case "Exit":
-			app.Stop()
+	return ui
+}
+
+func (ui *uiApp) run() error {
+	if err := ui.refreshDisplays(); err != nil {
+		if len(ui.displays) == 0 {
+			ui.setStatus(fmt.Sprintf("[red]螢幕資訊載入失敗: %v[-]", err))
+		} else {
+			ui.setStatus(fmt.Sprintf("[yellow]部分顯示器載入失敗: %v[-]", err))
 		}
-	})
+	} else if len(ui.displays) == 0 {
+		ui.setStatus("[yellow]未偵測到任何顯示器[-]")
+	} else {
+		ui.setStatus(fmt.Sprintf("[green]載入 %d 個顯示器[-]", len(ui.displays)))
+	}
 
-	// Settings Menu 選擇事件
-	settingsList.SetSelectedFunc(func(ix int, mainText, secText string, shortcut rune) {
-		switch mainText {
-		case "Display":
-			showModal(app, settingsList, "螢幕設定開啟")
-		case "Network":
-			showModal(app, settingsList, "網路設定開啟")
-		case "Back":
-			app.SetRoot(rootFlex, true).SetFocus(mainList)
-		}
-	})
+	return ui.app.SetRoot(ui.layout, true).SetFocus(ui.mainMenu).Run()
+}
 
-	// ESC 返回主畫面
-	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc {
-			app.SetRoot(rootFlex, true).SetFocus(mainList)
-			return nil
-		}
-		return event
-	})
+func (ui *uiApp) refreshDisplays() error {
+	displays, err := edidhelper.GetScreens()
+	ui.displays = displays
+	ui.populateDisplayList()
 
-	// 滑鼠右鍵返回主畫面
-	app.SetMouseCapture(func(event *tcell.EventMouse, action tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
-		if event.Buttons()&tcell.Button2 != 0 {
-			app.SetRoot(rootFlex, true).SetFocus(mainList)
-			return nil, action
-		}
-		return event, action
-	})
+	if len(displays) == 0 {
+		ui.table.Clear()
+		return err
+	}
 
-	// 啟動應用
-	if err := app.SetRoot(rootFlex, true).SetFocus(mainList).Run(); err != nil {
-		panic(err)
+	lastIndex := len(displays) - 1
+	ui.displayList.SetCurrentItem(lastIndex)
+	ui.updateTable(displays[lastIndex])
+	return err
+}
+
+func (ui *uiApp) populateDisplayList() {
+	ui.displayList.Clear()
+	for i, d := range ui.displays {
+		shortcut := rune('0' + (i % 10))
+		label := fmt.Sprintf("%s", d.AdapterName)
+		ui.displayList.AddItem(label, d.AdapterString, shortcut, nil)
+	}
+	if len(ui.displays) == 0 {
+		ui.displayList.AddItem("<無顯示器>", "", 0, nil)
 	}
 }
 
-// === Helper Functions ===
+func (ui *uiApp) updateTable(d *display.Display) {
+	ui.table.Clear()
 
-// 顯示彈出訊息
-func showModal(app *tview.Application, returnTo tview.Primitive, message string) {
+	headers := []string{"欄位", "內容"}
+	for col, header := range headers {
+		cell := tview.NewTableCell(header).
+			SetTextColor(tview.Styles.SecondaryTextColor).
+			SetSelectable(false).
+			SetAlign(tview.AlignCenter).
+			SetExpansion(1)
+		ui.table.SetCell(0, col, cell)
+	}
+
+	rows := displayToRows(d)
+	for rowIndex, row := range rows {
+		nameCell := tview.NewTableCell(row[0]).
+			SetTextColor(tview.Styles.SecondaryTextColor).
+			SetSelectable(false)
+		valueCell := tview.NewTableCell(row[1]).
+			SetTextColor(tview.Styles.PrimaryTextColor).
+			SetSelectable(false)
+		ui.table.SetCell(rowIndex+1, 0, nameCell)
+		ui.table.SetCell(rowIndex+1, 1, valueCell)
+	}
+}
+
+func displayToRows(d *display.Display) [][]string {
+	rows := [][]string{
+		{"顯示卡名稱", d.AdapterName},
+		{"顯示卡描述", d.AdapterString},
+		{"裝置識別碼", d.DeviceID},
+		{"製造商ID", d.ManufacturerID},
+		{"產品ID", d.ProductID},
+		{"序號", d.Serial},
+		{"製造週次", fmt.Sprintf("%d", d.Week)},
+		{"製造年份", fmt.Sprintf("%d", d.Year)},
+		{"EDID 版本", d.Version},
+		{"EDID 修訂版", d.Revision},
+	}
+
+	descriptors := []struct {
+		label string
+		value string
+	}{
+		{"描述 1", d.Descriptor1},
+		{"描述 2", d.Descriptor2},
+		{"描述 3", d.Descriptor3},
+		{"描述 4", d.Descriptor4},
+	}
+
+	for _, desc := range descriptors {
+		if desc.value != "" {
+			rows = append(rows, []string{desc.label, desc.value})
+		}
+	}
+
+	return rows
+}
+
+func (ui *uiApp) handleMainMenu(index int, mainText, _ string, _ rune) {
+	switch mainText {
+	case "重新偵測螢幕":
+		if err := ui.refreshDisplays(); err != nil {
+			message := fmt.Sprintf("螢幕重新偵測時發生錯誤: %v", err)
+			if len(ui.displays) > 0 {
+				message = fmt.Sprintf("部份顯示器載入失敗: %v", err)
+			}
+			ui.showModal(message)
+		} else if len(ui.displays) == 0 {
+			ui.showModal("未偵測到任何顯示器")
+		} else {
+			ui.showModal("螢幕重新偵測完成！")
+			ui.setStatus(fmt.Sprintf("[green]載入 %d 個顯示器[-]", len(ui.displays)))
+		}
+	case "切換至螢幕列表":
+		ui.app.SetFocus(ui.displayList)
+	case "離開":
+		ui.app.Stop()
+	}
+}
+
+func (ui *uiApp) onDisplayChanged(index int, mainText, _ string, _ rune) {
+	if index < 0 || index >= len(ui.displays) {
+		return
+	}
+	ui.updateTable(ui.displays[index])
+	ui.setStatus(fmt.Sprintf("[green]目前顯示器: %s[-]", mainText))
+}
+
+func (ui *uiApp) onDisplaySelected(index int, mainText, _ string, _ rune) {
+	ui.onDisplayChanged(index, mainText, "", 0)
+}
+
+func (ui *uiApp) handleGlobalShortcuts(event *tcell.EventKey) *tcell.EventKey {
+	if event.Key() == tcell.KeyEsc {
+		ui.app.SetFocus(ui.mainMenu)
+		return nil
+	}
+	return event
+}
+
+func (ui *uiApp) handleMouseCapture(event *tcell.EventMouse, action tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
+	if event.Buttons()&tcell.Button2 != 0 {
+		ui.app.SetFocus(ui.mainMenu)
+		return nil, action
+	}
+	return event, action
+}
+
+func (ui *uiApp) showModal(message string) {
 	modal := tview.NewModal().
 		SetText(message).
 		AddButtons([]string{"OK"}).
 		SetDoneFunc(func(_ int, _ string) {
-			app.SetRoot(returnTo, true).SetFocus(returnTo)
+			ui.app.SetRoot(ui.layout, true).SetFocus(ui.mainMenu)
 		})
-	app.SetRoot(modal, true).SetFocus(modal)
+
+	ui.app.SetRoot(modal, true).SetFocus(modal)
+}
+
+func (ui *uiApp) setStatus(message string) {
+	ui.statusBar.SetText(message)
 }
