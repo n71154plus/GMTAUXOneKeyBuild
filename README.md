@@ -60,6 +60,58 @@ GMTAUX One Key Build 是一個以 Go 撰寫的終端介面 (TUI) 應用程式，
 - 若偵測不到任何顯示器，請確認顯示器已啟用且驅動程式正常，或檢視狀態列
   的錯誤訊息。
 
+## 介面操作總覽
+
+- **Main Menu**（左上）提供重新偵測螢幕、重新載入腳本與快速切換焦點等功能。
+  按 `Enter` 或對應快捷鍵（`r`、`l`、`d`、`q`）即可執行。【F:ui/app.go†L40-L92】
+- **Displays**（左中）列出目前偵測到的顯示器，選取後右側 `Display Details`
+  表格會同步更新對應資訊。【F:ui/app.go†L49-L119】
+- **Lua Scripts**（左下）顯示 `scripts/` 目錄下的所有腳本。選取後按 `Enter`
+  可執行腳本；執行結果會以彈出視窗與狀態列提示呈現。【F:ui/app.go†L120-L205】
+- **Status**（底部）顯示目前狀態或錯誤訊息，Lua 腳本可透過 `set_status()` 更新
+  內容。【F:ui/app.go†L437-L481】
+- 滑鼠點擊可直接變更焦點，滾輪可捲動清單；滑鼠中鍵可立即返回主選單。
+  鍵盤操作時可使用 `Tab` 在主要區塊間循環切換焦點。【F:ui/app.go†L140-L189】
+
+## Lua 腳本 GPU 操作 API
+
+執行 Lua 腳本時，程式會注入數個與 GPU 輔助通道相關的函式，以便直接從腳本
+存取顯示器的 DPCD 與 I²C 介面。以下函式皆會在 GPU 驅動可用時才會成功運作；
+若驅動偵測失敗，函式會回傳 `nil, "錯誤訊息"` 或 `false, "錯誤訊息"`。
+
+### DPCD 操作
+
+- `read_dpcd(address, length)`：從指定 24-bit DPCD 起始位址讀取 `length`
+  個位元組。成功時回傳一個由 1 起始、包含位元組數值的陣列表；失敗時回傳
+  `nil` 與錯誤字串。【F:ui/app.go†L470-L517】
+- `write_dpcd(address, dataTable)`：將 `dataTable`（以 1 起始、0~255 的整數）
+  寫入指定位址。成功回傳 `true`，失敗回傳 `false` 與錯誤訊息。【F:ui/app.go†L517-L541】
+
+範例：讀取選定顯示器 0x0000~0x0005 的 DPCD 內容並列印。【F:scripts/read_dpcd_example.lua†L1-L38】
+
+```lua
+local data, err = read_dpcd(0x0000, 6)
+if not data then
+  return string.format("ReadDPCD 失敗：%s", err)
+end
+
+for i = 1, #data do
+  print(string.format("0x%04X = 0x%02X", 0x0000 + i - 1, data[i]))
+end
+```
+
+### I²C 操作
+
+- `read_i2c(address, length)`：從指定 I²C 裝置/暫存器讀取資料。`address`
+  的低 7 位元是從屬位址（不含 R/W 位），高位元組表示暫存器位址，因此例如
+  `0x50 << 0 | (0x00 << 8)` 表示從屬位址 `0x50`、暫存器 `0x00`。回傳格式與
+  `read_dpcd` 相同。【F:gpu/intel_igfx_windows.go†L161-L188】【F:ui/app.go†L541-L568】
+- `write_i2c(address, dataTable)`：將位元組資料寫入指定 I²C 裝置/暫存器。資料
+  表需為 0~255 整數，成功時回傳 `true`，失敗時回傳 `false` 與錯誤訊息。【F:gpu/intel_igfx_windows.go†L161-L188】【F:ui/app.go†L568-L593】
+
+編寫腳本時可搭配 `set_status("訊息")` 更新狀態列，或用 `show_modal("內容")`
+ 顯示執行結果提示，以提供更佳的互動體驗。【F:ui/app.go†L437-L481】
+
 ## 專案結構
 
 | 目錄 | 說明 |
