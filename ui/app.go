@@ -501,12 +501,14 @@ func (app *App) luaGPUFunctions(driver gpu.Driver, detectErr error) map[string]l
 				L.Push(lua.LString(describeError()))
 				return 2
 			}
+			// 從參數取得起始位址與讀取長度。
 			address := uint32(L.CheckInt(1))
 			length := L.CheckInt(2)
 			if length <= 0 {
 				L.ArgError(2, "length must be greater than zero")
 				return 0
 			}
+			// 使用驅動介面讀取 DPCD，並將資料轉成 Lua table。
 			data, err := driver.ReadDPCD(address, uint32(length))
 			if err != nil {
 				L.Push(lua.LNil)
@@ -526,6 +528,7 @@ func (app *App) luaGPUFunctions(driver gpu.Driver, detectErr error) map[string]l
 				L.Push(lua.LString(describeError()))
 				return 2
 			}
+			// 從 Lua table 轉換成位元組陣列後寫入指定位址。
 			address := uint32(L.CheckInt(1))
 			dataTbl := L.CheckTable(2)
 			data, err := tableToByteSlice(dataTbl)
@@ -548,6 +551,7 @@ func (app *App) luaGPUFunctions(driver gpu.Driver, detectErr error) map[string]l
 				L.Push(lua.LString(describeError()))
 				return 2
 			}
+			// I2C 讀取需要起始位址與資料長度。
 			address := uint32(L.CheckInt(1))
 			length := L.CheckInt(2)
 			if length <= 0 {
@@ -573,6 +577,7 @@ func (app *App) luaGPUFunctions(driver gpu.Driver, detectErr error) map[string]l
 				L.Push(lua.LString(describeError()))
 				return 2
 			}
+			// 解析 Lua table 內容並透過驅動執行寫入。
 			address := uint32(L.CheckInt(1))
 			dataTbl := L.CheckTable(2)
 			data, err := tableToByteSlice(dataTbl)
@@ -593,6 +598,7 @@ func (app *App) luaGPUFunctions(driver gpu.Driver, detectErr error) map[string]l
 }
 
 func (app *App) describeGPUError(err error) string {
+	// 若能取得目前顯示器的供應商，以此拼接提示訊息。
 	vendor := app.selectedDisplayVendor()
 	unavailable := "no compatible GPU driver available for selected display"
 	if vendor != "" {
@@ -608,6 +614,7 @@ func (app *App) describeGPUError(err error) string {
 }
 
 func (app *App) ensureGPUDriver() (gpu.Driver, error) {
+	// 先取得目前聚焦的顯示器，再推論應使用的 GPU 驅動。
 	display := app.currentDisplay()
 	vendor := app.vendorKeyForDisplay(display)
 	return app.ensureGPUDriverForVendor(vendor)
@@ -616,12 +623,14 @@ func (app *App) ensureGPUDriver() (gpu.Driver, error) {
 func (app *App) ensureGPUDriverForVendor(vendor string) (gpu.Driver, error) {
 	key := vendor
 	if key == "" {
+		// 沒有特定廠牌時使用預設索引鍵，避免 map key 為空字串。
 		key = "default"
 	}
 
 	app.gpuDetectMu.Lock()
 	defer app.gpuDetectMu.Unlock()
 
+	// 若之前已嘗試過偵測，直接回傳快取的結果。
 	if driver, ok := app.gpuDrivers[key]; ok || app.gpuDetectErrs[key] != nil {
 		return driver, app.gpuDetectErrs[key]
 	}
@@ -632,6 +641,7 @@ func (app *App) ensureGPUDriverForVendor(vendor string) (gpu.Driver, error) {
 	)
 
 	if vendor != "" {
+		// 先嘗試以指定廠牌偵測，失敗再退回一般偵測流程。
 		driver, err = gpu.DetectByName(vendor)
 		if errors.Is(err, gpu.ErrNoDriver) {
 			driver, err = gpu.Detect()
@@ -640,8 +650,13 @@ func (app *App) ensureGPUDriverForVendor(vendor string) (gpu.Driver, error) {
 		driver, err = gpu.Detect()
 	}
 
-	app.gpuDrivers[key] = driver
-	app.gpuDetectErrs[key] = err
+	// 將結果與錯誤都記錄起來，以利後續查詢。
+	if err != nil {
+		app.gpuDetectErrs[key] = err
+	} else {
+		app.gpuDrivers[key] = driver
+		app.gpuDetectErrs[key] = nil
+	}
 	return driver, err
 }
 
@@ -649,6 +664,7 @@ func formatLuaResults(values []lua.LValue) string {
 	if len(values) == 0 {
 		return ""
 	}
+	// 預先配置切片並將每個回傳值轉成字串。
 	parts := make([]string, 0, len(values))
 	for _, value := range values {
 		parts = append(parts, luaValueToString(value, 0))
@@ -671,6 +687,7 @@ func luaValueToString(value lua.LValue, depth int) string {
 		return "nil"
 	case *lua.LTable:
 		if depth >= 2 {
+			// 避免遞迴過深，使用省略表示。
 			return "{...}"
 		}
 		return luaTableToString(v, depth+1)
@@ -683,6 +700,7 @@ func luaTableToString(tbl *lua.LTable, depth int) string {
 	length := tbl.Len()
 	if length > 0 && tbl.MaxN() == length {
 		if luaTableIsByteArray(tbl) {
+			// 將連續索引的表視為位元組陣列並以十六進位呈現。
 			elems := make([]string, 0, length)
 			for i := 1; i <= length; i++ {
 				num := tbl.RawGetInt(i).(lua.LNumber)
@@ -691,6 +709,7 @@ func luaTableToString(tbl *lua.LTable, depth int) string {
 			}
 			return fmt.Sprintf("[%s]", strings.Join(elems, " "))
 		}
+		// 其他連續索引以陣列形式輸出。
 		elems := make([]string, 0, length)
 		for i := 1; i <= length; i++ {
 			elems = append(elems, luaValueToString(tbl.RawGetInt(i), depth))
@@ -699,6 +718,7 @@ func luaTableToString(tbl *lua.LTable, depth int) string {
 	}
 
 	entries := []string{}
+	// 非連續索引則以 key=value 格式收集。
 	tbl.ForEach(func(key, value lua.LValue) {
 		entry := fmt.Sprintf("%s=%s", luaValueToString(key, depth), luaValueToString(value, depth))
 		entries = append(entries, entry)
@@ -749,6 +769,7 @@ func tableToByteSlice(tbl *lua.LTable) ([]byte, error) {
 		if v < 0 || v > 255 {
 			return nil, fmt.Errorf("table index %d value %d out of range", i, v)
 		}
+		// 通過驗證後才寫入最終的 byte 切片。
 		data[i-1] = byte(v)
 	}
 	return data, nil
@@ -757,9 +778,11 @@ func tableToByteSlice(tbl *lua.LTable) ([]byte, error) {
 // luaContext 建立提供給 Lua 腳本使用的資料內容。
 func (app *App) luaContext(driver gpu.Driver, detectErr error) map[string]interface{} {
 	currentIndex := app.displayList.GetCurrentItem()
+	// 建立一個可供 Lua 閱讀的顯示器資訊切片。
 	displays := make([]interface{}, len(app.displays))
 	var selectedDisplay map[string]interface{}
 	for i, d := range app.displays {
+		// 逐一將顯示器欄位轉換成鍵值對，方便腳本使用。
 		entry := map[string]interface{}{
 			"adapter_name":    d.AdapterName,
 			"adapter_string":  d.AdapterString,
@@ -778,6 +801,7 @@ func (app *App) luaContext(driver gpu.Driver, detectErr error) map[string]interf
 		}
 		displays[i] = entry
 		if i == currentIndex {
+			// 記錄目前選中的顯示器資訊，供後續填入 context。
 			selectedDisplay = entry
 		}
 	}
@@ -786,6 +810,7 @@ func (app *App) luaContext(driver gpu.Driver, detectErr error) map[string]interf
 	if len(app.displays) == 0 {
 		selectedIndex = 0
 	}
+	// context 包含顯示器清單與目前索引等摘要資訊。
 	context := map[string]interface{}{
 		"display_count":          len(app.displays),
 		"displays":               displays,
@@ -800,6 +825,7 @@ func (app *App) luaContext(driver gpu.Driver, detectErr error) map[string]interf
 		"available": driver != nil,
 	}
 	if driver != nil {
+		// 若成功取得驅動，提供其名稱給腳本識別。
 		gpuInfo["driver_name"] = driver.Name()
 	}
 	if vendor := app.selectedDisplayVendor(); vendor != "" {
@@ -807,6 +833,7 @@ func (app *App) luaContext(driver gpu.Driver, detectErr error) map[string]interf
 		context["selected_display_vendor"] = vendor
 	}
 	if detectErr != nil {
+		// 將偵測錯誤訊息同步給腳本作為診斷資訊。
 		gpuInfo["error"] = detectErr.Error()
 	}
 	context["gpu"] = gpuInfo
@@ -826,6 +853,7 @@ func (app *App) vendorKeyForDisplay(d *display.Display) string {
 	if d == nil {
 		return ""
 	}
+	// 透過顯示卡描述判斷可能的廠牌，供驅動偵測使用。
 	adapter := strings.ToLower(d.AdapterString)
 	switch {
 	case strings.Contains(adapter, "nvidia"):
@@ -842,12 +870,14 @@ func (app *App) selectedDisplayVendor() string {
 }
 
 func (app *App) queueSetStatus(message string) {
+	// 將更新動作排入事件迴圈，避免與 UI 執行緒競爭。
 	app.app.QueueUpdateDraw(func() {
 		app.setStatus(message)
 	})
 }
 
 func (app *App) queueShowModal(message string) {
+	// 透過 QueueUpdateDraw 確保在主執行緒中建立彈窗。
 	app.app.QueueUpdateDraw(func() {
 		app.showModal(message)
 	})

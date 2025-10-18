@@ -26,16 +26,19 @@ type Display struct {
 
 // parseManufacturerID 解析製造商ID
 func parseManufacturerID(data []byte) string {
+	// 取出兩個位元組並轉成 16 位元整數，作為編碼來源。
 	val := binary.BigEndian.Uint16(data)
 	// EDID 製造商 ID 將三個五位元字母壓縮在 16bit 中，依序解析成 ASCII。
 	c1 := ((val >> 10) & 0x1F) + 'A' - 1
 	c2 := ((val >> 5) & 0x1F) + 'A' - 1
 	c3 := (val & 0x1F) + 'A' - 1
+	// 將三個字母組合成字串作為最終結果。
 	return fmt.Sprintf("%c%c%c", c1, c2, c3)
 }
 
 // equalBytes 檢查兩byte slice是否相同
 func equalBytes(a, b []byte) bool {
+	// 先檢查長度是否一致，避免越界比較。
 	if len(a) != len(b) {
 		return false
 	}
@@ -54,6 +57,7 @@ func parseDescriptor(desc []byte) string {
 		return ""
 	}
 
+	// 前兩個位元組為像素時脈，單位為 10kHz。
 	pixelClock := binary.LittleEndian.Uint16(desc[0:2])
 	if pixelClock == 0 {
 		// pixelClock 為 0 代表是監視器描述符，而非詳細定時資料。
@@ -117,6 +121,7 @@ func ParseEDID(edid []byte,
 	revision := fmt.Sprintf("%d", edid[0x13])
 
 	// 四個 Descriptor
+	// EDID 在四個固定位置儲存描述符資訊。
 	offsets := []int{0x36, 0x48, 0x5A, 0x6C}
 	descs := make([]string, 4)
 	for i, off := range offsets {
