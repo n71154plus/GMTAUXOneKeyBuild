@@ -29,9 +29,9 @@ type App struct {
 	scriptsDir            string
 	scripts               []luascripts.Script
 	onSwitchToDisplayList func(*App)
-	gpuDriver             gpu.Driver
-	gpuDetectOnce         sync.Once
-	gpuDetectErr          error
+	gpuDrivers            map[string]gpu.Driver
+	gpuDetectErrs         map[string]error
+	gpuDetectMu           sync.Mutex
 }
 
 // NewApp 建立一個新的 App 實例，並完成所有介面的初始化設定。
@@ -111,16 +111,18 @@ func NewApp() *App {
 		AddItem(content, 0, 1, true).
 		AddItem(status, 1, 0, false)
 
-	// 將所有元件封裝在 App 結構中，方便後續操作。
+		// 將所有元件封裝在 App 結構中，方便後續操作。
 	app := &App{
-		app:         application,
-		mainMenu:    mainMenu,
-		displayList: displayList,
-		scriptList:  scriptList,
-		table:       table,
-		statusBar:   status,
-		layout:      layout,
-		scriptsDir:  "scripts",
+		app:           application,
+		mainMenu:      mainMenu,
+		displayList:   displayList,
+		scriptList:    scriptList,
+		table:         table,
+		statusBar:     status,
+		layout:        layout,
+		scriptsDir:    "scripts",
+		gpuDrivers:    make(map[string]gpu.Driver),
+		gpuDetectErrs: make(map[string]error),
 	}
 
 	app.onSwitchToDisplayList = func(a *App) {
@@ -591,25 +593,56 @@ func (app *App) luaGPUFunctions(driver gpu.Driver, detectErr error) map[string]l
 }
 
 func (app *App) describeGPUError(err error) string {
+	vendor := app.selectedDisplayVendor()
+	unavailable := "no compatible GPU driver available for selected display"
+	if vendor != "" {
+		unavailable = fmt.Sprintf("no %s GPU driver available for selected display", vendor)
+	}
 	if err == nil {
-		return "no compatible GPU driver available"
+		return unavailable
 	}
 	if errors.Is(err, gpu.ErrNoDriver) {
-		return "no compatible GPU driver available"
+		return unavailable
 	}
 	return err.Error()
 }
 
 func (app *App) ensureGPUDriver() (gpu.Driver, error) {
-	app.gpuDetectOnce.Do(func() {
-		driver, err := gpu.Detect()
-		if err != nil {
-			app.gpuDetectErr = err
-			return
+	display := app.currentDisplay()
+	vendor := app.vendorKeyForDisplay(display)
+	return app.ensureGPUDriverForVendor(vendor)
+}
+
+func (app *App) ensureGPUDriverForVendor(vendor string) (gpu.Driver, error) {
+	key := vendor
+	if key == "" {
+		key = "default"
+	}
+
+	app.gpuDetectMu.Lock()
+	defer app.gpuDetectMu.Unlock()
+
+	if driver, ok := app.gpuDrivers[key]; ok || app.gpuDetectErrs[key] != nil {
+		return driver, app.gpuDetectErrs[key]
+	}
+
+	var (
+		driver gpu.Driver
+		err    error
+	)
+
+	if vendor != "" {
+		driver, err = gpu.DetectByName(vendor)
+		if errors.Is(err, gpu.ErrNoDriver) {
+			driver, err = gpu.Detect()
 		}
-		app.gpuDriver = driver
-	})
-	return app.gpuDriver, app.gpuDetectErr
+	} else {
+		driver, err = gpu.Detect()
+	}
+
+	app.gpuDrivers[key] = driver
+	app.gpuDetectErrs[key] = err
+	return driver, err
 }
 
 func formatLuaResults(values []lua.LValue) string {
@@ -649,6 +682,15 @@ func luaValueToString(value lua.LValue, depth int) string {
 func luaTableToString(tbl *lua.LTable, depth int) string {
 	length := tbl.Len()
 	if length > 0 && tbl.MaxN() == length {
+		if luaTableIsByteArray(tbl) {
+			elems := make([]string, 0, length)
+			for i := 1; i <= length; i++ {
+				num := tbl.RawGetInt(i).(lua.LNumber)
+				value := int(float64(num))
+				elems = append(elems, fmt.Sprintf("0x%02X", value&0xFF))
+			}
+			return fmt.Sprintf("[%s]", strings.Join(elems, " "))
+		}
 		elems := make([]string, 0, length)
 		for i := 1; i <= length; i++ {
 			elems = append(elems, luaValueToString(tbl.RawGetInt(i), depth))
@@ -666,6 +708,25 @@ func luaTableToString(tbl *lua.LTable, depth int) string {
 		return "{}"
 	}
 	return fmt.Sprintf("{%s}", strings.Join(entries, ", "))
+}
+
+func luaTableIsByteArray(tbl *lua.LTable) bool {
+	length := tbl.Len()
+	if length == 0 || tbl.MaxN() != length {
+		return false
+	}
+	for i := 1; i <= length; i++ {
+		value := tbl.RawGetInt(i)
+		num, ok := value.(lua.LNumber)
+		if !ok {
+			return false
+		}
+		f := float64(num)
+		if float64(int(f)) != f || f < 0 || f > 255 {
+			return false
+		}
+	}
+	return true
 }
 
 func tableToByteSlice(tbl *lua.LTable) ([]byte, error) {
@@ -695,9 +756,11 @@ func tableToByteSlice(tbl *lua.LTable) ([]byte, error) {
 
 // luaContext 建立提供給 Lua 腳本使用的資料內容。
 func (app *App) luaContext(driver gpu.Driver, detectErr error) map[string]interface{} {
+	currentIndex := app.displayList.GetCurrentItem()
 	displays := make([]interface{}, len(app.displays))
+	var selectedDisplay map[string]interface{}
 	for i, d := range app.displays {
-		displays[i] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"adapter_name":    d.AdapterName,
 			"adapter_string":  d.AdapterString,
 			"device_id":       d.DeviceID,
@@ -713,9 +776,12 @@ func (app *App) luaContext(driver gpu.Driver, detectErr error) map[string]interf
 			"descriptor3":     d.Descriptor3,
 			"descriptor4":     d.Descriptor4,
 		}
+		displays[i] = entry
+		if i == currentIndex {
+			selectedDisplay = entry
+		}
 	}
 
-	currentIndex := app.displayList.GetCurrentItem()
 	selectedIndex := currentIndex + 1
 	if len(app.displays) == 0 {
 		selectedIndex = 0
@@ -726,11 +792,19 @@ func (app *App) luaContext(driver gpu.Driver, detectErr error) map[string]interf
 		"selected_display_index": selectedIndex,
 	}
 
+	if selectedDisplay != nil {
+		context["selected_display"] = selectedDisplay
+	}
+
 	gpuInfo := map[string]interface{}{
 		"available": driver != nil,
 	}
 	if driver != nil {
 		gpuInfo["driver_name"] = driver.Name()
+	}
+	if vendor := app.selectedDisplayVendor(); vendor != "" {
+		gpuInfo["vendor"] = vendor
+		context["selected_display_vendor"] = vendor
 	}
 	if detectErr != nil {
 		gpuInfo["error"] = detectErr.Error()
@@ -738,6 +812,33 @@ func (app *App) luaContext(driver gpu.Driver, detectErr error) map[string]interf
 	context["gpu"] = gpuInfo
 
 	return context
+}
+
+func (app *App) currentDisplay() *display.Display {
+	index := app.displayList.GetCurrentItem()
+	if index < 0 || index >= len(app.displays) {
+		return nil
+	}
+	return app.displays[index]
+}
+
+func (app *App) vendorKeyForDisplay(d *display.Display) string {
+	if d == nil {
+		return ""
+	}
+	adapter := strings.ToLower(d.AdapterString)
+	switch {
+	case strings.Contains(adapter, "nvidia"):
+		return "nvidia"
+	case strings.Contains(adapter, "intel"):
+		return "intel"
+	default:
+		return ""
+	}
+}
+
+func (app *App) selectedDisplayVendor() string {
+	return app.vendorKeyForDisplay(app.currentDisplay())
 }
 
 func (app *App) queueSetStatus(message string) {
