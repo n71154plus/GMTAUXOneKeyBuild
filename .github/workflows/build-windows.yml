@@ -1,17 +1,17 @@
-name: «Ø¸m Windows¡]Go §Ö³t¸ô®|¡^
+name: å»ºç½® Windowsï¼ˆGo å¿«é€Ÿè·¯å¾‘ï¼‰
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "µo¦æª©¥»¡]¨Ò¦p v1.0.0¡^¡C­Y¯dªÅ¶È²£¥X artifact¡A¤£«Ø¥ß Release¡C"
+        description: "ç™¼è¡Œç‰ˆæœ¬ï¼ˆä¾‹å¦‚ v1.0.0ï¼‰ã€‚è‹¥ç•™ç©ºåƒ…ç”¢å‡º artifactï¼Œä¸å»ºç«‹ Releaseã€‚"
         required: false
         default: ""
 
 permissions:
   contents: write
 
-# ­Y­«½ÆÄ²µo¦P¤@ workflow¡A·|¦Û°Ê¨ú®øÂÂªº¡]Á×§K¦P®É«Ø¸m¡^
+# è‹¥é‡è¤‡è§¸ç™¼åŒä¸€ workflowï¼Œæœƒè‡ªå‹•å–æ¶ˆèˆŠçš„ï¼ˆé¿å…åŒæ™‚å»ºç½®ï¼‰
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -26,16 +26,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ¨Ï¥Î runner ¤º«Øªº Go¡]¨Ò¦p 1.23.x¡^¡AÁ×§K­«·s¤U¸ü¾ã­Ó SDK
-      - name: ³]©w Go¡]§Ö³t¡^
+      # ä½¿ç”¨ runner å…§å»ºçš„ Goï¼ˆä¾‹å¦‚ 1.23.xï¼‰ï¼Œé¿å…é‡æ–°ä¸‹è¼‰æ•´å€‹ SDK
+      - name: è¨­å®š Goï¼ˆå¿«é€Ÿï¼‰
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'         # »P go.mod ¤ºª©¥»¬Û®e
+          go-version: '1.25.x'         # èˆ‡ go.mod å…§ç‰ˆæœ¬ç›¸å®¹
           check-latest: false
-          cache: false                 # Ãö³¬¤º«Ø cache¡A§Ú­Ì¤â°Ê±±¨î
+          cache: false                 # é—œé–‰å…§å»º cacheï¼Œæˆ‘å€‘æ‰‹å‹•æ§åˆ¶
 
-      # §Ö¨ú GOBIN¡G§A go install ªº¤u¨ã¡]¨Ò¦p golangci-lint¡^·|§Ö«Ü¦h
-      - name: §Ö¨ú GOBIN
+      # å¿«å– GOBINï¼šä½  go install çš„å·¥å…·ï¼ˆä¾‹å¦‚ golangci-lintï¼‰æœƒå¿«å¾ˆå¤š
+      - name: å¿«å– GOBIN
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\gobin
@@ -43,15 +43,15 @@ jobs:
           restore-keys: |
             gobin-${{ runner.os }}-
 
-      - name: ³]©w GOBIN
+      - name: è¨­å®š GOBIN
         shell: pwsh
         run: |
           $env:GOBIN="${{ runner.temp }}\gobin"
           go env -w GOBIN="$env:GOBIN"
           echo "GOBIN=$env:GOBIN" >> $env:GITHUB_ENV
 
-      # ? ·s¼W¡G§Ö¨ú Go ¼Ò²Õ¤U¸ü¥Ø¿ı¡]pkg/mod¡^
-      - name: §Ö¨ú GOMODCACHE
+      # ? æ–°å¢ï¼šå¿«å– Go æ¨¡çµ„ä¸‹è¼‰ç›®éŒ„ï¼ˆpkg/modï¼‰
+      - name: å¿«å– GOMODCACHE
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\gomod
@@ -59,15 +59,15 @@ jobs:
           restore-keys: |
             gomod-${{ runner.os }}-
 
-      - name: ³]©w GOMODCACHE
+      - name: è¨­å®š GOMODCACHE
         shell: pwsh
         run: |
           $env:GOMODCACHE="${{ runner.temp }}\gomod"
           go env -w GOMODCACHE="$env:GOMODCACHE"
           echo "GOMODCACHE=$env:GOMODCACHE" >> $env:GITHUB_ENV
 
-      # ? §Ö¨ú Go «Ø¸m¼È¦s¡]½sÄ¶²£ª«¡^
-      - name: §Ö¨ú GOCACHE
+      # ? å¿«å– Go å»ºç½®æš«å­˜ï¼ˆç·¨è­¯ç”¢ç‰©ï¼‰
+      - name: å¿«å– GOCACHE
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\gocache
@@ -75,56 +75,57 @@ jobs:
           restore-keys: |
             gocache-${{ runner.os }}-
 
-      - name: ³]©w GOCACHE
+      - name: è¨­å®š GOCACHE
         shell: pwsh
         run: |
           $env:GOCACHE="${{ runner.temp }}\gocache"
           go env -w GOCACHE="$env:GOCACHE"
           echo "GOCACHE=$env:GOCACHE" >> $env:GITHUB_ENV
 
-      - name: Åã¥Ü¤u¨ãÃì¸ê°T
+      - name: é¡¯ç¤ºå·¥å…·éˆè³‡è¨Š
         shell: bash
         run: |
           go version
           go env
 
-      - name: «Ø¸m±M®×
+      - name: å»ºç½®å°ˆæ¡ˆ
         shell: bash
         run: |
           mkdir -p dist
+          go mod tidy
           go build -v -trimpath -buildvcs=false -ldflags "-s -w" -o dist/app.exe ./
 
-      - name: ¤W¶Ç«Ø¸m²£ª«
+      - name: ä¸Šå‚³å»ºç½®ç”¢ç‰©
         uses: actions/upload-artifact@v4
         with:
           name: app-windows-amd64-${{ github.sha }}
           path: dist/app.exe
 
-  # ­Y¨Ï¥ÎªÌ¦b¤â°ÊÄ²µo®É¿é¤J¤F version¡]¨Ò¦p v0.1.0¡^¡A«h«Ø¥ß Release
+  # è‹¥ä½¿ç”¨è€…åœ¨æ‰‹å‹•è§¸ç™¼æ™‚è¼¸å…¥äº† versionï¼ˆä¾‹å¦‚ v0.1.0ï¼‰ï¼Œå‰‡å»ºç«‹ Release
   release:
     if: ${{ inputs.version != '' && startsWith(inputs.version, 'v') }}
     needs: build
     runs-on: windows-latest
     steps:
-      - name: ¤U¸ü«Ø¸m²£ª«
+      - name: ä¸‹è¼‰å»ºç½®ç”¢ç‰©
         uses: actions/download-artifact@v4
         with:
           name: app-windows-amd64-${{ github.sha }}
           path: dist
 
-      - name: ²£¥ÍÀÉ®×Âø´ê
+      - name: ç”¢ç”Ÿæª”æ¡ˆé›œæ¹Š
         shell: pwsh
         run: |
           Get-FileHash dist\app.exe -Algorithm SHA256 | ForEach-Object {
             "$($_.Hash)  app.exe" | Out-File -FilePath dist\SHA256SUMS.txt -Encoding ascii
           }
 
-      - name: µo§G Release
+      - name: ç™¼ä½ˆ Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version }}
           name: ${{ inputs.version }}
-          body: "¤â°Ê«Ø¥ßµo¦æª©¥» ${{ inputs.version }}"
+          body: "æ‰‹å‹•å»ºç«‹ç™¼è¡Œç‰ˆæœ¬ ${{ inputs.version }}"
           files: |
             dist/app.exe
             dist/SHA256SUMS.txt
