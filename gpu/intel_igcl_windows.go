@@ -275,13 +275,14 @@ type ctlI2CAccessArgs struct {
 
 type ctlAuxAccessArgs struct {
 	Size     uint32
-	Version  uint32
+	Version  uint8
+	_        [3]byte
 	OpType   uint32
 	Flags    uint32
 	Address  uint32
+	RAD      uint64
+	PortID   uint32
 	DataSize uint32
-	_        uint32
-	_2       uint32
 	Data     [auxI2CDataCap]byte
 }
 
