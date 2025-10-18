@@ -12,13 +12,14 @@ import (
 
 // App 結構封裝了整個終端介面應用程式的狀態與元件。
 type App struct {
-	app         *tview.Application // tview 的核心應用程式實例
-	displays    []*display.Display // 目前抓取到的顯示器資訊列表
-	mainMenu    *tview.List        // 左側主要功能選單
-	displayList *tview.List        // 顯示所有顯示器的清單
-	table       *tview.Table       // 顯示詳細屬性的表格
-	statusBar   *tview.TextView    // 底部狀態列
-	layout      tview.Primitive    // 頁面佈局的根節點
+	app                   *tview.Application // tview 的核心應用程式實例
+	displays              []*display.Display // 目前抓取到的顯示器資訊列表
+	mainMenu              *tview.List        // 左側主要功能選單
+	displayList           *tview.List        // 顯示所有顯示器的清單
+	table                 *tview.Table       // 顯示詳細屬性的表格
+	statusBar             *tview.TextView    // 底部狀態列
+	layout                tview.Primitive    // 頁面佈局的根節點
+	onSwitchToDisplayList func(*App)
 }
 
 // NewApp 建立一個新的 App 實例，並完成所有介面的初始化設定。
@@ -94,6 +95,10 @@ func NewApp() *App {
 		table:       table,
 		statusBar:   status,
 		layout:      layout,
+	}
+
+	app.onSwitchToDisplayList = func(a *App) {
+		a.FocusDisplayList()
 	}
 
 	// 綁定主選單和顯示器清單的事件處理函式。
@@ -244,8 +249,10 @@ func (app *App) handleMainMenu(index int, mainText, _ string, _ rune) {
 			app.setStatus(fmt.Sprintf("[green]載入 %d 個顯示器[-]", len(app.displays)))
 		}
 	case "切換至螢幕列表":
-		// 將焦點移到顯示器清單，方便使用者瀏覽。
-		app.app.SetFocus(app.displayList)
+		// 將行為委由外部指定的處理函式執行。
+		if app.onSwitchToDisplayList != nil {
+			app.onSwitchToDisplayList(app)
+		}
 	case "離開":
 		// 停止事件迴圈，結束應用程式。
 		app.app.Stop()
@@ -319,4 +326,17 @@ func (app *App) showModal(message string) {
 // setStatus 更新狀態列的文字，統一由此處集中管理。
 func (app *App) setStatus(message string) {
 	app.statusBar.SetText(message)
+}
+
+// FocusDisplayList 將焦點移至顯示器清單，提供外部呼叫時重複使用。
+func (app *App) FocusDisplayList() {
+	app.app.SetFocus(app.displayList)
+}
+
+// SetSwitchToDisplayListHandler 設定主選單「切換至螢幕列表」項目的處理函式。
+func (app *App) SetSwitchToDisplayListHandler(handler func(*App)) {
+	if handler == nil {
+		return
+	}
+	app.onSwitchToDisplayList = handler
 }
