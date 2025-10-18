@@ -489,7 +489,7 @@ func (c *IntelCUI) auxErr(op string, hr int32, code int32) error {
 	if msg == "" {
 		msg = "intel igfx: unexpected AUX error"
 	}
-	return fmt.Errorf(msg)
+	return fmt.Errorf("%s", msg)
 }
 
 func (c *IntelCUI) i2cWriteSetup(slave7bit byte, reg byte) error {
