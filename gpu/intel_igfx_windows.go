@@ -83,7 +83,7 @@ func newIntelDriver() (Driver, error) {
 		return nil, err
 	}
 
-	_, _, err := findIntelDisplay(cui)
+	_, _, err = findIntelDisplay(cui)
 	if err != nil {
 		cui.Close()
 		if errors.Is(err, errIntelNoDisplay) {
