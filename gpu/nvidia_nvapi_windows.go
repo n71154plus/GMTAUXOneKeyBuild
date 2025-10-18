@@ -84,7 +84,7 @@ type nvapiDriver struct {
 }
 
 func init() {
-	registerProvider(newNVAPIDriver)
+	registerProviderNamed("nvidia", newNVAPIDriver)
 }
 
 func newNVAPIDriver() (Driver, error) {

@@ -71,7 +71,7 @@ type intelDriver struct {
 }
 
 func init() {
-	registerProvider(newIntelDriver)
+	registerProviderNamed("intel", newIntelDriver)
 }
 
 func newIntelDriver() (Driver, error) {

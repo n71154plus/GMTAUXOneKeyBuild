@@ -2,6 +2,7 @@ package gpu
 
 import (
 	"errors"
+	"strings"
 	"sync"
 )
 
@@ -20,20 +21,29 @@ type Driver interface {
 
 type providerFunc func() (Driver, error)
 
+type providerEntry struct {
+	name string
+	fn   providerFunc
+}
+
 var (
 	providersMu sync.RWMutex
-	providers   []providerFunc
+	providers   []providerEntry
 )
 
 func registerProvider(fn providerFunc) {
+	registerProviderNamed("", fn)
+}
+
+func registerProviderNamed(name string, fn providerFunc) {
 	providersMu.Lock()
 	defer providersMu.Unlock()
-	providers = append(providers, fn)
+	providers = append(providers, providerEntry{name: strings.ToLower(name), fn: fn})
 }
 
 func Detect() (Driver, error) {
 	providersMu.RLock()
-	list := append([]providerFunc(nil), providers...)
+	list := append([]providerEntry(nil), providers...)
 	providersMu.RUnlock()
 
 	if len(list) == 0 {
@@ -41,8 +51,8 @@ func Detect() (Driver, error) {
 	}
 
 	var joined error
-	for _, fn := range list {
-		driver, err := fn()
+	for _, entry := range list {
+		driver, err := entry.fn()
 		if err == nil {
 			return driver, nil
 		}
@@ -60,5 +70,40 @@ func Detect() (Driver, error) {
 		return nil, joined
 	}
 
+	return nil, ErrNoDriver
+}
+
+func DetectByName(name string) (Driver, error) {
+	providersMu.RLock()
+	list := append([]providerEntry(nil), providers...)
+	providersMu.RUnlock()
+
+	if name == "" {
+		return Detect()
+	}
+
+	target := strings.ToLower(name)
+	var joined error
+	for _, entry := range list {
+		if entry.name == "" || entry.name != target {
+			continue
+		}
+		driver, err := entry.fn()
+		if err == nil {
+			return driver, nil
+		}
+		if errors.Is(err, ErrNoDriver) {
+			continue
+		}
+		if joined == nil {
+			joined = err
+		} else {
+			joined = errors.Join(joined, err)
+		}
+	}
+
+	if joined != nil {
+		return nil, joined
+	}
 	return nil, ErrNoDriver
 }
