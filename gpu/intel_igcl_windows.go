@@ -27,7 +27,7 @@ var (
 
 func init() {
 	registerProvider(newIntelPreferredDriver)
-	registerProviderNamed("intel-igcl", newIntelIGCLDriver)
+	registerProviderNamed("intel", newIntelIGCLDriver)
 }
 
 func newIntelPreferredDriver() (Driver, error) {
@@ -86,7 +86,7 @@ func (d *intelIGCLDriver) ReadDPCD(addr uint32, length uint32) ([]byte, error) {
 		return nil, fmt.Errorf("dpcd read length must be greater than zero")
 	}
 
-	const maxChunk = uint32(auxI2CDataCap)
+	const maxChunk = uint32(CTL_AUX_MAX_DATA_SIZE)
 	remaining := length
 	offset := addr
 	result := make([]byte, 0, length)
@@ -116,7 +116,7 @@ func (d *intelIGCLDriver) WriteDPCD(addr uint32, data []byte) error {
 		return nil
 	}
 
-	const maxChunk = auxI2CDataCap
+	const maxChunk = CTL_AUX_MAX_DATA_SIZE
 	offset := addr
 	remaining := data
 
@@ -143,7 +143,7 @@ func (d *intelIGCLDriver) ReadI2C(addr uint32, length uint32) ([]byte, error) {
 		return []byte{}, nil
 	}
 
-	const maxChunk = auxI2CDataCap
+	const maxChunk = CTL_AUX_MAX_DATA_SIZE
 	slave, reg := decodeI2CAddress(addr)
 	remaining := length
 	offset := uint32(reg)
@@ -174,7 +174,7 @@ func (d *intelIGCLDriver) WriteI2C(addr uint32, data []byte) error {
 		return nil
 	}
 
-	const maxChunk = auxI2CDataCap
+	const maxChunk = CTL_AUX_MAX_DATA_SIZE
 	slave, reg := decodeI2CAddress(addr)
 	offset := uint32(reg)
 	remaining := data
@@ -210,8 +210,8 @@ const (
 
 // Operation types for ctl AUX/I2C requests.
 const (
-	ctlOperationTypeRead  = 0
-	ctlOperationTypeWrite = 1
+	ctlOperationTypeRead  = 1
+	ctlOperationTypeWrite = 2
 )
 
 // AUX access flags.
@@ -229,7 +229,8 @@ const (
 
 // ctl libraries typically support payloads up to 256/512 bytes depending on
 // the version. 512 works for recent builds but adjust if necessary.
-const auxI2CDataCap = 512
+const CTL_AUX_MAX_DATA_SIZE = 0x0084
+const CTL_I2C_MAX_DATA_SIZE = 0x0080
 
 type (
 	ctlAPIHandle           = unsafe.Pointer
@@ -277,7 +278,7 @@ type ctlI2CAccessArgs struct {
 	Offset   uint32
 	DataSize uint32
 	_        uint32
-	Data     [auxI2CDataCap]byte
+	Data     [CTL_I2C_MAX_DATA_SIZE]byte
 }
 
 type ctlAuxAccessArgs struct {
@@ -290,7 +291,7 @@ type ctlAuxAccessArgs struct {
 	RAD      uint64
 	PortID   uint32
 	DataSize uint32
-	Data     [auxI2CDataCap]byte
+	Data     [CTL_AUX_MAX_DATA_SIZE]byte
 }
 
 var (
@@ -482,13 +483,13 @@ func (c *igclContext) Close() {
 }
 
 func (c *igclContext) ReadDPCD(addr uint32, n int) ([]byte, error) {
-	if n <= 0 || n > auxI2CDataCap {
-		return nil, fmt.Errorf("invalid dpcd length %d (1..%d)", n, auxI2CDataCap)
+	if n <= 0 || n > CTL_AUX_MAX_DATA_SIZE {
+		return nil, fmt.Errorf("invalid dpcd length %d (1..%d)", n, CTL_AUX_MAX_DATA_SIZE)
 	}
 
 	var args ctlAuxAccessArgs
 	args.Size = uint32(unsafe.Sizeof(args))
-	args.Version = 1
+	args.Version = 0
 	args.OpType = ctlOperationTypeRead
 	args.Flags = ctlAuxFlagNativeAUX
 	args.Address = addr
@@ -503,8 +504,8 @@ func (c *igclContext) ReadDPCD(addr uint32, n int) ([]byte, error) {
 }
 
 func (c *igclContext) WriteDPCD(addr uint32, data []byte) error {
-	if len(data) == 0 || len(data) > auxI2CDataCap {
-		return fmt.Errorf("invalid dpcd payload %d (1..%d)", len(data), auxI2CDataCap)
+	if len(data) == 0 || len(data) > CTL_AUX_MAX_DATA_SIZE {
+		return fmt.Errorf("invalid dpcd payload %d (1..%d)", len(data), CTL_AUX_MAX_DATA_SIZE)
 	}
 
 	var args ctlAuxAccessArgs
@@ -523,8 +524,8 @@ func (c *igclContext) WriteDPCD(addr uint32, data []byte) error {
 }
 
 func (c *igclContext) ReadI2C(slave7bit byte, offset uint32, n int) ([]byte, error) {
-	if n <= 0 || n > auxI2CDataCap {
-		return nil, fmt.Errorf("invalid i2c length %d (1..%d)", n, auxI2CDataCap)
+	if n <= 0 || n > CTL_AUX_MAX_DATA_SIZE {
+		return nil, fmt.Errorf("invalid i2c length %d (1..%d)", n, CTL_AUX_MAX_DATA_SIZE)
 	}
 
 	var args ctlI2CAccessArgs
@@ -545,8 +546,8 @@ func (c *igclContext) ReadI2C(slave7bit byte, offset uint32, n int) ([]byte, err
 }
 
 func (c *igclContext) WriteI2C(slave7bit byte, offset uint32, data []byte) error {
-	if len(data) == 0 || len(data) > auxI2CDataCap {
-		return fmt.Errorf("invalid i2c payload %d (1..%d)", len(data), auxI2CDataCap)
+	if len(data) == 0 || len(data) > CTL_AUX_MAX_DATA_SIZE {
+		return fmt.Errorf("invalid i2c payload %d (1..%d)", len(data), CTL_AUX_MAX_DATA_SIZE)
 	}
 
 	var args ctlI2CAccessArgs
