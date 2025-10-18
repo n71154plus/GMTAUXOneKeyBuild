@@ -4,10 +4,12 @@ import (
 	"fmt"
 
 	"GMTAUXOneKeyBuild/edidhelper"
+	"GMTAUXOneKeyBuild/luascripts"
 	display "GMTAUXOneKeyBuild/struct"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // App 結構封裝了整個終端介面應用程式的狀態與元件。
@@ -16,9 +18,12 @@ type App struct {
 	displays              []*display.Display // 目前抓取到的顯示器資訊列表
 	mainMenu              *tview.List        // 左側主要功能選單
 	displayList           *tview.List        // 顯示所有顯示器的清單
+	scriptList            *tview.List        // 可執行的 Lua 腳本清單
 	table                 *tview.Table       // 顯示詳細屬性的表格
 	statusBar             *tview.TextView    // 底部狀態列
 	layout                tview.Primitive    // 頁面佈局的根節點
+	scriptsDir            string
+	scripts               []luascripts.Script
 	onSwitchToDisplayList func(*App)
 }
 
@@ -30,6 +35,7 @@ func NewApp() *App {
 	// 建立主選單，提供重新偵測、切換焦點與離開等功能。
 	mainMenu := tview.NewList().
 		AddItem("重新偵測螢幕", "刷新顯示器列表", 'r', nil).
+		AddItem("重新載入 Lua 腳本", "重新掃描 scripts 目錄", 'l', nil).
 		AddItem("切換至螢幕列表", "將焦點移到螢幕選單", 'd', nil).
 		AddItem("離開", "結束應用程式", 'q', nil).
 		SetHighlightFullLine(true)
@@ -45,6 +51,16 @@ func NewApp() *App {
 		SetHighlightFullLine(true)
 	displayList.SetBorder(true).
 		SetTitle(" Displays ").
+		SetTitleAlign(tview.AlignCenter).
+		SetBorderColor(tcell.ColorWhite).
+		SetTitleColor(tcell.ColorYellow)
+
+	// Lua 腳本列表，用於執行放在指定資料夾內的腳本。
+	scriptList := tview.NewList().
+		ShowSecondaryText(false).
+		SetHighlightFullLine(true)
+	scriptList.SetBorder(true).
+		SetTitle(" Lua Scripts ").
 		SetTitleAlign(tview.AlignCenter).
 		SetBorderColor(tcell.ColorWhite).
 		SetTitleColor(tcell.ColorYellow)
@@ -73,7 +89,8 @@ func NewApp() *App {
 	leftPanel := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(mainMenu, 0, 1, true).
-		AddItem(displayList, 0, 2, false)
+		AddItem(displayList, 0, 2, false).
+		AddItem(scriptList, 0, 2, false)
 
 	// 中央內容區包含左側功能區與右側資訊表格。
 	content := tview.NewFlex().
@@ -92,9 +109,11 @@ func NewApp() *App {
 		app:         application,
 		mainMenu:    mainMenu,
 		displayList: displayList,
+		scriptList:  scriptList,
 		table:       table,
 		statusBar:   status,
 		layout:      layout,
+		scriptsDir:  "scripts",
 	}
 
 	app.onSwitchToDisplayList = func(a *App) {
@@ -105,6 +124,8 @@ func NewApp() *App {
 	mainMenu.SetSelectedFunc(app.handleMainMenu)
 	displayList.SetChangedFunc(app.onDisplayChanged)
 	displayList.SetSelectedFunc(app.onDisplaySelected)
+	scriptList.SetChangedFunc(app.onScriptChanged)
+	scriptList.SetSelectedFunc(app.onScriptSelected)
 
 	// 設定全域鍵盤與滑鼠事件，使操作更直覺。
 	application.SetInputCapture(app.handleGlobalShortcuts)
@@ -126,6 +147,10 @@ func (app *App) Run() error {
 		app.setStatus("[yellow]未偵測到任何顯示器[-]")
 	} else {
 		app.setStatus(fmt.Sprintf("[green]載入 %d 個顯示器[-]", len(app.displays)))
+	}
+
+	if err := app.refreshScripts(); err != nil {
+		app.setStatus(fmt.Sprintf("[red]Lua 腳本載入失敗: %v[-]", err))
 	}
 
 	// 建立畫面根節點並將焦點放在主選單後開始事件迴圈。
@@ -164,6 +189,19 @@ func (app *App) populateDisplayList() {
 	// 若沒有任何顯示器，提供佔位文字提醒使用者。
 	if len(app.displays) == 0 {
 		app.displayList.AddItem("<無顯示器>", "", 0, nil)
+	}
+}
+
+// populateScriptList 將腳本名稱填入 Lua 腳本清單。
+func (app *App) populateScriptList() {
+	app.scriptList.Clear()
+	if len(app.scripts) == 0 {
+		app.scriptList.AddItem("<無腳本>", "請將 .lua 檔案放入 scripts 目錄", 0, nil)
+		return
+	}
+
+	for _, script := range app.scripts {
+		app.scriptList.AddItem(script.Name, "", 0, nil)
 	}
 }
 
@@ -248,6 +286,14 @@ func (app *App) handleMainMenu(index int, mainText, _ string, _ rune) {
 			app.showModal("螢幕重新偵測完成！")
 			app.setStatus(fmt.Sprintf("[green]載入 %d 個顯示器[-]", len(app.displays)))
 		}
+	case "重新載入 Lua 腳本":
+		if err := app.refreshScripts(); err != nil {
+			app.showModal(fmt.Sprintf("Lua 腳本載入失敗: %v", err))
+		} else if len(app.scripts) == 0 {
+			app.showModal("未找到任何 Lua 腳本\n請將 .lua 檔案放入 scripts 目錄")
+		} else {
+			app.showModal("Lua 腳本清單已更新！")
+		}
 	case "切換至螢幕列表":
 		// 將行為委由外部指定的處理函式執行。
 		if app.onSwitchToDisplayList != nil {
@@ -282,19 +328,25 @@ func (app *App) handleGlobalShortcuts(event *tcell.EventKey) *tcell.EventKey {
 		app.app.SetFocus(app.mainMenu)
 		return nil
 	case tcell.KeyTAB:
-		// Tab 在主選單與顯示器清單間循環切換。
-		if app.app.GetFocus() == app.mainMenu {
+		// Tab 在主選單、顯示器清單與 Lua 腳本清單間循環切換。
+		switch app.app.GetFocus() {
+		case app.mainMenu:
 			app.app.SetFocus(app.displayList)
-		} else {
+		case app.displayList:
+			app.app.SetFocus(app.scriptList)
+		default:
 			app.app.SetFocus(app.mainMenu)
 		}
 		return nil
 	case tcell.KeyBacktab:
 		// Shift+Tab 則反向切換焦點。
-		if app.app.GetFocus() == app.displayList {
-			app.app.SetFocus(app.mainMenu)
-		} else {
+		switch app.app.GetFocus() {
+		case app.scriptList:
 			app.app.SetFocus(app.displayList)
+		case app.displayList:
+			app.app.SetFocus(app.mainMenu)
+		default:
+			app.app.SetFocus(app.scriptList)
 		}
 		return nil
 	}
@@ -333,10 +385,126 @@ func (app *App) FocusDisplayList() {
 	app.app.SetFocus(app.displayList)
 }
 
+// FocusScriptList 將焦點移至 Lua 腳本清單。
+func (app *App) FocusScriptList() {
+	app.app.SetFocus(app.scriptList)
+}
+
 // SetSwitchToDisplayListHandler 設定主選單「切換至螢幕列表」項目的處理函式。
 func (app *App) SetSwitchToDisplayListHandler(handler func(*App)) {
 	if handler == nil {
 		return
 	}
 	app.onSwitchToDisplayList = handler
+}
+
+// refreshScripts 讀取 scripts 資料夾並更新 Lua 腳本清單。
+func (app *App) refreshScripts() error {
+	scripts, err := luascripts.ListScripts(app.scriptsDir)
+	if err != nil {
+		app.scripts = nil
+		app.populateScriptList()
+		return err
+	}
+
+	app.scripts = scripts
+	app.populateScriptList()
+	return nil
+}
+
+// onScriptChanged 在使用者切換不同腳本時更新狀態列提示。
+func (app *App) onScriptChanged(index int, mainText, _ string, _ rune) {
+	if index < 0 || index >= len(app.scripts) {
+		return
+	}
+	app.setStatus(fmt.Sprintf("[yellow]選擇 Lua 腳本: %s[-]", mainText))
+}
+
+// onScriptSelected 執行清單中選取的 Lua 腳本。
+func (app *App) onScriptSelected(index int, mainText, _ string, _ rune) {
+	if index < 0 || index >= len(app.scripts) {
+		if len(app.scripts) == 0 {
+			app.showModal("請將 .lua 腳本放入 scripts 目錄後再試一次。")
+		}
+		return
+	}
+
+	script := app.scripts[index]
+	app.setStatus(fmt.Sprintf("[yellow]執行 Lua 腳本: %s[-]", script.Name))
+	go app.executeLuaScript(script)
+}
+
+// executeLuaScript 在獨立 goroutine 中執行 Lua 腳本，避免阻塞 UI。
+func (app *App) executeLuaScript(script luascripts.Script) {
+	opts := luascripts.RuntimeOptions{
+		Functions: map[string]lua.LGFunction{
+			"set_status": func(L *lua.LState) int {
+				message := L.CheckString(1)
+				app.queueSetStatus(message)
+				return 0
+			},
+			"show_modal": func(L *lua.LState) int {
+				message := L.CheckString(1)
+				app.queueShowModal(message)
+				return 0
+			},
+		},
+		Globals: map[string]interface{}{
+			"context": app.luaContext(),
+		},
+	}
+
+	if err := luascripts.ExecuteScript(script.Path, opts); err != nil {
+		app.queueSetStatus(fmt.Sprintf("[red]Lua 腳本失敗: %v[-]", err))
+		app.queueShowModal(fmt.Sprintf("Lua 腳本「%s」執行失敗:\n%v", script.Name, err))
+		return
+	}
+
+	app.queueSetStatus(fmt.Sprintf("[green]Lua 腳本「%s」執行完成[-]", script.Name))
+}
+
+// luaContext 建立提供給 Lua 腳本使用的資料內容。
+func (app *App) luaContext() map[string]interface{} {
+	displays := make([]interface{}, len(app.displays))
+	for i, d := range app.displays {
+		displays[i] = map[string]interface{}{
+			"adapter_name":    d.AdapterName,
+			"adapter_string":  d.AdapterString,
+			"device_id":       d.DeviceID,
+			"manufacturer_id": d.ManufacturerID,
+			"product_id":      d.ProductID,
+			"serial":          d.Serial,
+			"week":            d.Week,
+			"year":            d.Year,
+			"version":         d.Version,
+			"revision":        d.Revision,
+			"descriptor1":     d.Descriptor1,
+			"descriptor2":     d.Descriptor2,
+			"descriptor3":     d.Descriptor3,
+			"descriptor4":     d.Descriptor4,
+		}
+	}
+
+	currentIndex, _ := app.displayList.GetCurrentItem()
+	selectedIndex := currentIndex + 1
+	if len(app.displays) == 0 {
+		selectedIndex = 0
+	}
+	return map[string]interface{}{
+		"display_count":          len(app.displays),
+		"displays":               displays,
+		"selected_display_index": selectedIndex,
+	}
+}
+
+func (app *App) queueSetStatus(message string) {
+	app.app.QueueUpdateDraw(func() {
+		app.setStatus(message)
+	})
+}
+
+func (app *App) queueShowModal(message string) {
+	app.app.QueueUpdateDraw(func() {
+		app.showModal(message)
+	})
 }
