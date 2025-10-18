@@ -128,6 +128,7 @@ func loadNvapiProcs() (*nvapiProcs, error) {
 
 	query := dll.NewProc("nvapi_QueryInterface")
 	get := func(id uintptr) uintptr {
+		// 透過 QueryInterface 取得各功能的函式指標。
 		r, _, _ := query.Call(id)
 		return r
 	}
@@ -185,6 +186,7 @@ func (p *nvapiProcs) findActiveDisplayPort() (uintptr, uint32, error) {
 			continue
 		}
 		if info.Flags&1 != 0 {
+			// Flags 的最低位代表輸出埠是否處於啟用狀態。
 			return handle, outID, nil
 		}
 	}
@@ -198,8 +200,10 @@ func (p *nvapiProcs) enumDisplayHandles() ([]uintptr, error) {
 		status, _ := call2(p.enumDH, uintptr(index), uintptr(unsafe.Pointer(&handle)))
 		switch uint32(status) {
 		case nvapiStatusOK:
+			// 成功取得顯示器控制代碼，加入清單。
 			handles = append(handles, handle)
 		case nvapiStatusEndEnumeration:
+			// 到達列舉結尾時中斷迴圈。
 			return handles, nil
 		default:
 			return nil, p.statusError(uint32(status), "NvAPI_EnumNvidiaDisplayHandle")
@@ -240,6 +244,7 @@ func (d *nvapiDriver) ReadDPCD(addr uint32, length uint32) ([]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	// 準備 NVAPI 所需的參數結構，指定操作型態與目標位址。
 	params := nvDpAuxParamsV1{
 		Version:   nvDpAuxParamsV1Version,
 		OutputID:  d.outputID,
@@ -262,6 +267,7 @@ func (d *nvapiDriver) ReadDPCD(addr uint32, length uint32) ([]byte, error) {
 		return nil, fmt.Errorf("nvapi: dp aux error status 0x%X", uint32(params.Status))
 	}
 
+	// LenMinus1 回報實際讀取的位元組數，需再加 1 才是真實長度。
 	actual := int(params.LenMinus1 + 1)
 	if actual < 0 {
 		actual = 0
@@ -293,6 +299,7 @@ func (p *nvapiProcs) statusError(status uint32, context string) error {
 	}
 	message := fmt.Sprintf("status 0x%08X", status)
 	if p.getErr != 0 {
+		// 呼叫 NVAPI 取得更具體的錯誤訊息。
 		buf := make([]byte, 256)
 		call2(p.getErr, uintptr(status), uintptr(unsafe.Pointer(&buf[0])))
 		if idx := bytes.IndexByte(buf, 0); idx >= 0 {
@@ -303,6 +310,7 @@ func (p *nvapiProcs) statusError(status uint32, context string) error {
 		}
 	}
 	if context != "" {
+		// 若提供 context，將其加入錯誤訊息中便於追蹤。
 		return fmt.Errorf("%s: %s (0x%08X)", context, message, status)
 	}
 	return fmt.Errorf("nvapi error: %s (0x%08X)", message, status)

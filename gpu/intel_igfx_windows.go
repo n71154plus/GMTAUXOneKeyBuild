@@ -78,6 +78,7 @@ func newIntelIGFXDriver() (Driver, error) {
 	cui, err := NewIntelCUI()
 	if err != nil {
 		if errors.Is(err, errIntelUnavailable) {
+			// 介面不可用時視為未支援該裝置，回傳 ErrNoDriver。
 			return nil, ErrNoDriver
 		}
 		return nil, err
@@ -87,6 +88,7 @@ func newIntelIGFXDriver() (Driver, error) {
 	if err != nil {
 		cui.Close()
 		if errors.Is(err, errIntelNoDisplay) {
+			// 若沒有啟用的顯示器，代表無法操作 AUX 介面。
 			return nil, ErrNoDriver
 		}
 		return nil, err
@@ -94,6 +96,7 @@ func newIntelIGFXDriver() (Driver, error) {
 
 	d := &intelDriver{cui: cui}
 	runtime.SetFinalizer(d, func(driver *intelDriver) {
+		// 當物件被回收時自動釋放 COM 資源。
 		driver.cui.Close()
 	})
 	return d, nil
@@ -121,6 +124,7 @@ func (d *intelDriver) ReadDPCD(addr uint32, length uint32) ([]byte, error) {
 		if chunk > maxChunk {
 			chunk = maxChunk
 		}
+		// Intel 介面僅支援有限長度的讀取，需分段累積結果。
 		data, err := d.cui.ReadDPCD(offset, chunk)
 		if err != nil {
 			return nil, err
@@ -149,6 +153,7 @@ func (d *intelDriver) WriteDPCD(addr uint32, data []byte) error {
 		if len(chunk) > maxChunk {
 			chunk = chunk[:maxChunk]
 		}
+		// 分段寫入 AUX 註冊，避免超過硬體限制。
 		if err := d.cui.WriteDPCD(offset, chunk); err != nil {
 			return err
 		}
@@ -168,6 +173,7 @@ func (d *intelDriver) ReadI2C(addr uint32, length uint32) ([]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	// 呼叫底層介面以指定的從站位址讀取資料。
 	return d.cui.I2CRead(slave, reg, int(length))
 }
 
@@ -185,6 +191,7 @@ func (d *intelDriver) WriteI2C(addr uint32, data []byte) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	// 目前僅支援寫入單一位元組的資料。
 	return d.cui.I2CWrite(slave, data[0])
 }
 

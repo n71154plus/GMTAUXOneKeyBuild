@@ -33,6 +33,7 @@ func init() {
 func newIntelPreferredDriver() (Driver, error) {
 	var igfxErr error
 	if intelIGFXAvailable() {
+		// 優先使用 igfx 介面，若成功可直接回傳。
 		driver, err := newIntelIGFXDriver()
 		if err == nil {
 			return driver, nil
@@ -42,6 +43,7 @@ func newIntelPreferredDriver() (Driver, error) {
 		}
 	}
 
+	// 若 igfx 失敗，改用 IGCL 介面嘗試建立驅動。
 	driver, err := newIntelIGCLDriver()
 	if err == nil {
 		return driver, nil
@@ -69,6 +71,7 @@ func newIntelIGCLDriver() (Driver, error) {
 
 	d := &intelIGCLDriver{ctx: ctx}
 	runtime.SetFinalizer(d, func(driver *intelIGCLDriver) {
+		// 釋放底層資源避免記憶體洩漏。
 		driver.ctx.Close()
 	})
 	return d, nil
@@ -96,6 +99,7 @@ func (d *intelIGCLDriver) ReadDPCD(addr uint32, length uint32) ([]byte, error) {
 		if chunk > maxChunk {
 			chunk = maxChunk
 		}
+		// 單次只能讀取有限長度，因此分批與硬體通訊。
 		data, err := d.ctx.ReadDPCD(offset, int(chunk))
 		if err != nil {
 			return nil, err
@@ -124,6 +128,7 @@ func (d *intelIGCLDriver) WriteDPCD(addr uint32, data []byte) error {
 		if len(chunk) > maxChunk {
 			chunk = chunk[:maxChunk]
 		}
+		// 對應讀取的方式，寫入同樣以分段處理。
 		if err := d.ctx.WriteDPCD(offset, chunk); err != nil {
 			return err
 		}
@@ -152,6 +157,7 @@ func (d *intelIGCLDriver) ReadI2C(addr uint32, length uint32) ([]byte, error) {
 		if chunk > uint32(maxChunk) {
 			chunk = uint32(maxChunk)
 		}
+		// I2C 讀取也需遵守資料長度限制。
 		data, err := d.ctx.ReadI2C(slave, offset, int(chunk))
 		if err != nil {
 			return nil, err
@@ -181,6 +187,7 @@ func (d *intelIGCLDriver) WriteI2C(addr uint32, data []byte) error {
 		if len(chunk) > maxChunk {
 			chunk = chunk[:maxChunk]
 		}
+		// 逐段寫入指定的 I2C 裝置。
 		if err := d.ctx.WriteI2C(slave, offset, chunk); err != nil {
 			return err
 		}

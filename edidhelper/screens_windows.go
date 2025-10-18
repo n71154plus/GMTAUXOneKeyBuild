@@ -44,6 +44,7 @@ func GetScreens() ([]*display.Display, error) {
 			break
 		}
 
+		// 將 UTF-16 結果轉換成 Go 字串以利後續使用。
 		adapterName := syscall.UTF16ToString(adapter.DeviceName[:])
 		adapterString := syscall.UTF16ToString(adapter.DeviceString[:])
 
@@ -58,6 +59,7 @@ func GetScreens() ([]*display.Display, error) {
 				continue
 			}
 
+			// 轉換顯示器的裝置識別碼並移除前後空白。
 			deviceID := strings.TrimSpace(syscall.UTF16ToString(monitor.DeviceID[:]))
 			// 從登錄檔讀出對應的 EDID。
 			edid, err := readEDIDFromRegistry(deviceID)
@@ -84,10 +86,12 @@ func GetScreens() ([]*display.Display, error) {
 
 func enumDisplayDevices(device string, devNum uint32) (*displayDevice, bool) {
 	var dd displayDevice
+	// 必須指定結構大小，API 才能寫入正確的欄位資料。
 	dd.cb = uint32(unsafe.Sizeof(dd))
 
 	var devicePtr *uint16
 	if device != "" {
+		// 將 Go 字串轉為 UTF-16，供 Win32 API 使用。
 		devicePtr, _ = syscall.UTF16PtrFromString(device)
 	}
 
@@ -130,6 +134,7 @@ func readEDIDFromRegistry(deviceID string) ([]byte, error) {
 		instanceKey.Close()
 
 		if err == nil && len(edid) > 0 {
+			// 一旦找到符合的資料即可回傳，無需再繼續搜尋。
 			return edid, nil
 		}
 		if err != nil {
