@@ -231,9 +231,35 @@ type (
 )
 
 type ctlInitArgs struct {
-	Size    uint32
-	Version uint32
+	Size             uint32
+	Version          uint8
+	_                [3]byte
+	AppVersion       uint32
+	Flags            ctlInitFlags
+	SupportedVersion uint32
+	ApplicationUID   ctlApplicationID
 }
+
+type ctlInitFlags uint32
+
+const (
+	ctlInitFlagNone ctlInitFlags = 0
+)
+
+const (
+	ctlInitAppVersion  uint32 = 0x00010001
+	ctlInitArgsMinSize        = unsafe.Sizeof(struct {
+		Size             uint32
+		Version          uint8
+		_                [3]byte
+		AppVersion       uint32
+		Flags            uint32
+		SupportedVersion uint32
+		ApplicationUID   [16]byte
+	}{})
+)
+
+type ctlApplicationID [16]byte
 
 type ctlI2CAccessArgs struct {
 	Size     uint32
@@ -380,8 +406,8 @@ func newIGCLContext() (*igclContext, error) {
 		return nil, err
 	}
 
-	if unsafe.Sizeof(ctlInitArgs{}) < 8 {
-		return nil, errors.New("ctlInitArgs too small; adjust struct definition")
+	if size := unsafe.Sizeof(ctlInitArgs{}); size < ctlInitArgsMinSize {
+		return nil, fmt.Errorf("ctlInitArgs too small; adjust struct definition (size=%d)", size)
 	}
 	if unsafe.Sizeof(ctlI2CAccessArgs{}) < 64 {
 		return nil, errors.New("ctlI2CAccessArgs too small; adjust struct definition or auxI2CDataCap")
@@ -392,8 +418,10 @@ func newIGCLContext() (*igclContext, error) {
 
 	var api ctlAPIHandle
 	initArgs := ctlInitArgs{
-		Size:    uint32(unsafe.Sizeof(ctlInitArgs{})),
-		Version: 1,
+		Size:       uint32(unsafe.Sizeof(ctlInitArgs{})),
+		Version:    0,
+		AppVersion: ctlInitAppVersion,
+		Flags:      ctlInitFlagNone,
 	}
 	if r := ctlInit(&initArgs, &api); r != ctlResultSuccess {
 		return nil, fmt.Errorf("ctlInit failed: 0x%08x", r)
