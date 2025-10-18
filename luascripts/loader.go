@@ -56,7 +56,7 @@ func ListScripts(dir string) ([]Script, error) {
 }
 
 // ExecuteScript 以新的 Lua 虛擬機執行指定腳本，並可透過選項注入函式與變數。
-func ExecuteScript(path string, opts RuntimeOptions) error {
+func ExecuteScript(path string, opts RuntimeOptions) ([]lua.LValue, error) {
 	L := lua.NewState()
 	defer L.Close()
 
@@ -69,10 +69,24 @@ func ExecuteScript(path string, opts RuntimeOptions) error {
 	}
 
 	if err := ensureExecutable(path); err != nil {
-		return err
+		return nil, err
 	}
 
-	return L.DoFile(path)
+	if err := L.DoFile(path); err != nil {
+		return nil, err
+	}
+
+	top := L.GetTop()
+	if top == 0 {
+		return nil, nil
+	}
+
+	results := make([]lua.LValue, top)
+	for i := 1; i <= top; i++ {
+		results[i-1] = L.Get(i)
+	}
+
+	return results, nil
 }
 
 func ensureExecutable(path string) error {

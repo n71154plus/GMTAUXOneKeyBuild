@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
+	"strings"
+	"sync"
 
 	"GMTAUXOneKeyBuild/edidhelper"
+	"GMTAUXOneKeyBuild/gpu"
 	"GMTAUXOneKeyBuild/luascripts"
 	display "GMTAUXOneKeyBuild/struct"
 
@@ -25,6 +29,9 @@ type App struct {
 	scriptsDir            string
 	scripts               []luascripts.Script
 	onSwitchToDisplayList func(*App)
+	gpuDriver             gpu.Driver
+	gpuDetectOnce         sync.Once
+	gpuDetectErr          error
 }
 
 // NewApp 建立一個新的 App 實例，並完成所有介面的初始化設定。
@@ -436,35 +443,258 @@ func (app *App) onScriptSelected(index int, mainText, _ string, _ rune) {
 
 // executeLuaScript 在獨立 goroutine 中執行 Lua 腳本，避免阻塞 UI。
 func (app *App) executeLuaScript(script luascripts.Script) {
-	opts := luascripts.RuntimeOptions{
-		Functions: map[string]lua.LGFunction{
-			"set_status": func(L *lua.LState) int {
-				message := L.CheckString(1)
-				app.queueSetStatus(message)
-				return 0
-			},
-			"show_modal": func(L *lua.LState) int {
-				message := L.CheckString(1)
-				app.queueShowModal(message)
-				return 0
-			},
+	driver, detectErr := app.ensureGPUDriver()
+
+	functions := map[string]lua.LGFunction{
+		"set_status": func(L *lua.LState) int {
+			message := L.CheckString(1)
+			app.queueSetStatus(message)
+			return 0
 		},
-		Globals: map[string]interface{}{
-			"context": app.luaContext(),
+		"show_modal": func(L *lua.LState) int {
+			message := L.CheckString(1)
+			app.queueShowModal(message)
+			return 0
 		},
 	}
 
-	if err := luascripts.ExecuteScript(script.Path, opts); err != nil {
+	for name, fn := range app.luaGPUFunctions(driver, detectErr) {
+		functions[name] = fn
+	}
+
+	opts := luascripts.RuntimeOptions{
+		Functions: functions,
+		Globals: map[string]interface{}{
+			"context": app.luaContext(driver, detectErr),
+		},
+	}
+
+	results, err := luascripts.ExecuteScript(script.Path, opts)
+	if err != nil {
 		app.queueSetStatus(fmt.Sprintf("[red]Lua 腳本失敗: %v[-]", err))
 		app.queueShowModal(fmt.Sprintf("Lua 腳本「%s」執行失敗:\n%v", script.Name, err))
 		return
 	}
 
+	if len(results) > 0 {
+		output := formatLuaResults(results)
+		if strings.TrimSpace(output) != "" {
+			message := fmt.Sprintf("Lua 腳本「%s」執行結果:\n%s", script.Name, output)
+			app.queueShowModal(message)
+		}
+	}
+
 	app.queueSetStatus(fmt.Sprintf("[green]Lua 腳本「%s」執行完成[-]", script.Name))
 }
 
+func (app *App) luaGPUFunctions(driver gpu.Driver, detectErr error) map[string]lua.LGFunction {
+	describeError := func() string {
+		return app.describeGPUError(detectErr)
+	}
+
+	return map[string]lua.LGFunction{
+		"read_dpcd": func(L *lua.LState) int {
+			if driver == nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(describeError()))
+				return 2
+			}
+			address := uint32(L.CheckInt(1))
+			length := L.CheckInt(2)
+			if length <= 0 {
+				L.ArgError(2, "length must be greater than zero")
+				return 0
+			}
+			data, err := driver.ReadDPCD(address, uint32(length))
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			tbl := L.NewTable()
+			for i, b := range data {
+				tbl.RawSetInt(i+1, lua.LNumber(b))
+			}
+			L.Push(tbl)
+			return 1
+		},
+		"write_dpcd": func(L *lua.LState) int {
+			if driver == nil {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString(describeError()))
+				return 2
+			}
+			address := uint32(L.CheckInt(1))
+			dataTbl := L.CheckTable(2)
+			data, err := tableToByteSlice(dataTbl)
+			if err != nil {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			if err := driver.WriteDPCD(address, data); err != nil {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			L.Push(lua.LBool(true))
+			return 1
+		},
+		"read_i2c": func(L *lua.LState) int {
+			if driver == nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(describeError()))
+				return 2
+			}
+			address := uint32(L.CheckInt(1))
+			length := L.CheckInt(2)
+			if length <= 0 {
+				L.ArgError(2, "length must be greater than zero")
+				return 0
+			}
+			data, err := driver.ReadI2C(address, uint32(length))
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			tbl := L.NewTable()
+			for i, b := range data {
+				tbl.RawSetInt(i+1, lua.LNumber(b))
+			}
+			L.Push(tbl)
+			return 1
+		},
+		"write_i2c": func(L *lua.LState) int {
+			if driver == nil {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString(describeError()))
+				return 2
+			}
+			address := uint32(L.CheckInt(1))
+			dataTbl := L.CheckTable(2)
+			data, err := tableToByteSlice(dataTbl)
+			if err != nil {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			if err := driver.WriteI2C(address, data); err != nil {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			L.Push(lua.LBool(true))
+			return 1
+		},
+	}
+}
+
+func (app *App) describeGPUError(err error) string {
+	if err == nil {
+		return "no compatible GPU driver available"
+	}
+	if errors.Is(err, gpu.ErrNoDriver) {
+		return "no compatible GPU driver available"
+	}
+	return err.Error()
+}
+
+func (app *App) ensureGPUDriver() (gpu.Driver, error) {
+	app.gpuDetectOnce.Do(func() {
+		driver, err := gpu.Detect()
+		if err != nil {
+			app.gpuDetectErr = err
+			return
+		}
+		app.gpuDriver = driver
+	})
+	return app.gpuDriver, app.gpuDetectErr
+}
+
+func formatLuaResults(values []lua.LValue) string {
+	if len(values) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, luaValueToString(value, 0))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func luaValueToString(value lua.LValue, depth int) string {
+	switch v := value.(type) {
+	case lua.LBool:
+		if lua.LVIsFalse(value) {
+			return "false"
+		}
+		return "true"
+	case lua.LNumber:
+		return fmt.Sprintf("%g", float64(v))
+	case lua.LString:
+		return string(v)
+	case *lua.LNilType:
+		return "nil"
+	case *lua.LTable:
+		if depth >= 2 {
+			return "{...}"
+		}
+		return luaTableToString(v, depth+1)
+	default:
+		return value.String()
+	}
+}
+
+func luaTableToString(tbl *lua.LTable, depth int) string {
+	length := tbl.Len()
+	if length > 0 && tbl.MaxN() == length {
+		elems := make([]string, 0, length)
+		for i := 1; i <= length; i++ {
+			elems = append(elems, luaValueToString(tbl.RawGetInt(i), depth))
+		}
+		return fmt.Sprintf("[%s]", strings.Join(elems, ", "))
+	}
+
+	entries := []string{}
+	tbl.ForEach(func(key, value lua.LValue) {
+		entry := fmt.Sprintf("%s=%s", luaValueToString(key, depth), luaValueToString(value, depth))
+		entries = append(entries, entry)
+	})
+
+	if len(entries) == 0 {
+		return "{}"
+	}
+	return fmt.Sprintf("{%s}", strings.Join(entries, ", "))
+}
+
+func tableToByteSlice(tbl *lua.LTable) ([]byte, error) {
+	length := tbl.Len()
+	if length == 0 {
+		return []byte{}, nil
+	}
+	data := make([]byte, length)
+	for i := 1; i <= length; i++ {
+		val := tbl.RawGetInt(i)
+		num, ok := val.(lua.LNumber)
+		if !ok {
+			return nil, fmt.Errorf("table index %d is not a number", i)
+		}
+		floatVal := float64(num)
+		if float64(int(floatVal)) != floatVal {
+			return nil, fmt.Errorf("table index %d value must be an integer", i)
+		}
+		v := int(floatVal)
+		if v < 0 || v > 255 {
+			return nil, fmt.Errorf("table index %d value %d out of range", i, v)
+		}
+		data[i-1] = byte(v)
+	}
+	return data, nil
+}
+
 // luaContext 建立提供給 Lua 腳本使用的資料內容。
-func (app *App) luaContext() map[string]interface{} {
+func (app *App) luaContext(driver gpu.Driver, detectErr error) map[string]interface{} {
 	displays := make([]interface{}, len(app.displays))
 	for i, d := range app.displays {
 		displays[i] = map[string]interface{}{
@@ -490,11 +720,24 @@ func (app *App) luaContext() map[string]interface{} {
 	if len(app.displays) == 0 {
 		selectedIndex = 0
 	}
-	return map[string]interface{}{
+	context := map[string]interface{}{
 		"display_count":          len(app.displays),
 		"displays":               displays,
 		"selected_display_index": selectedIndex,
 	}
+
+	gpuInfo := map[string]interface{}{
+		"available": driver != nil,
+	}
+	if driver != nil {
+		gpuInfo["driver_name"] = driver.Name()
+	}
+	if detectErr != nil {
+		gpuInfo["error"] = detectErr.Error()
+	}
+	context["gpu"] = gpuInfo
+
+	return context
 }
 
 func (app *App) queueSetStatus(message string) {

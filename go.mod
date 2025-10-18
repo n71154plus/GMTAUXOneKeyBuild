@@ -5,7 +5,7 @@ go 1.25.3
 require (
 	github.com/gdamore/tcell/v2 v2.9.0
 	github.com/rivo/tview v0.42.0
-	github.com/yuin/gopher-lua v1.1.0
+        github.com/yuin/gopher-lua v1.1.1
 	golang.org/x/sys v0.35.0
 )
 
