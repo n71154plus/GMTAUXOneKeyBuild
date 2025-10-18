@@ -71,10 +71,10 @@ type intelDriver struct {
 }
 
 func init() {
-	registerProviderNamed("intel", newIntelDriver)
+	registerProviderNamed("intel", newIntelIGFXDriver)
 }
 
-func newIntelDriver() (Driver, error) {
+func newIntelIGFXDriver() (Driver, error) {
 	cui, err := NewIntelCUI()
 	if err != nil {
 		if errors.Is(err, errIntelUnavailable) {
@@ -645,6 +645,17 @@ func decodeI2CAddress(addr uint32) (byte, int) {
 	slave := byte(addr & 0x7F)
 	reg := int(addr >> 8)
 	return slave, reg
+}
+
+func intelIGFXAvailable() bool {
+	if err := ensureLoaded(); err != nil {
+		return false
+	}
+	_ = CoInitialize()
+
+	var clsid windows.GUID
+	hr := CLSIDFromProgID(utf16Ptr("Igfxext.CUIExternal"), &clsid)
+	return SUCCEEDED(hr)
 }
 
 func ensureLoaded() error {

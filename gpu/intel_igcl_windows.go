@@ -26,7 +26,36 @@ var (
 )
 
 func init() {
+	registerProvider(newIntelPreferredDriver)
 	registerProviderNamed("intel-igcl", newIntelIGCLDriver)
+}
+
+func newIntelPreferredDriver() (Driver, error) {
+	var igfxErr error
+	if intelIGFXAvailable() {
+		driver, err := newIntelIGFXDriver()
+		if err == nil {
+			return driver, nil
+		}
+		if !errors.Is(err, ErrNoDriver) {
+			igfxErr = err
+		}
+	}
+
+	driver, err := newIntelIGCLDriver()
+	if err == nil {
+		return driver, nil
+	}
+	if errors.Is(err, ErrNoDriver) {
+		if igfxErr != nil {
+			return nil, igfxErr
+		}
+		return nil, ErrNoDriver
+	}
+	if igfxErr != nil {
+		return nil, errors.Join(igfxErr, err)
+	}
+	return nil, err
 }
 
 func newIntelIGCLDriver() (Driver, error) {
