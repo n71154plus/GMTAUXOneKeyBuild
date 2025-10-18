@@ -485,7 +485,7 @@ func (app *App) luaContext() map[string]interface{} {
 		}
 	}
 
-	currentIndex, _ := app.displayList.GetCurrentItem()
+	currentIndex := app.displayList.GetCurrentItem()
 	selectedIndex := currentIndex + 1
 	if len(app.displays) == 0 {
 		selectedIndex = 0
